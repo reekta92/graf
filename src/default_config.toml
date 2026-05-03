@@ -17,7 +17,6 @@ minimap_position = "top_right"
 minimap_width = 24
 minimap_height = 12
 canvas_marker = "braille"
-minimap_marker = "half_block"
 node_shape = "circle"
 label_offset = 4.0
 grid_divisions = 10
