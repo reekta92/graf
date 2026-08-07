@@ -9,8 +9,8 @@ use ratatui::widgets::canvas::{Canvas, Line, Painter, Shape};
 use crate::config::{
     EdgeColorMode, GrafConfig, LabelMode, LegendPosition, NodeColorMode, NodeShape, NodeSizeMode,
 };
-use crate::graph::viewport::Viewport;
 use crate::graph::GraphState;
+use crate::graph::viewport::Viewport;
 fn tag_color(tag: &str, index: usize, _total: usize, palette: &[Color]) -> Color {
     let palette_len = palette.len();
     if palette_len == 0 {
@@ -356,9 +356,11 @@ impl RenderCache {
                     .get(&node.data.folder)
                     .copied()
                     .unwrap_or(Color::Gray),
-                NodeColorMode::LinkCount => {
-                    link_count_color(node.data.link_count, self.max_link_count, &colors.node_colors)
-                }
+                NodeColorMode::LinkCount => link_count_color(
+                    node.data.link_count,
+                    self.max_link_count,
+                    &colors.node_colors,
+                ),
                 NodeColorMode::Uniform => {
                     colors.node_colors.first().copied().unwrap_or(Color::Gray)
                 }
@@ -431,7 +433,11 @@ impl RenderCache {
         self.nodes.clear();
         for idx in graph.node_indices() {
             let node = &graph[idx];
-            let primary_color = self.node_own_color.get(&idx).copied().unwrap_or(Color::Gray);
+            let primary_color = self
+                .node_own_color
+                .get(&idx)
+                .copied()
+                .unwrap_or(Color::Gray);
             let radius = match config.visual.node_size_mode {
                 NodeSizeMode::Fixed => config.visual.node_size,
                 NodeSizeMode::LinkCount => {
@@ -440,8 +446,7 @@ impl RenderCache {
                     } else {
                         config.visual.node_size
                             * (1.0
-                                + (node.data.link_count as f64 / self.max_link_count as f64)
-                                    * 1.5)
+                                + (node.data.link_count as f64 / self.max_link_count as f64) * 1.5)
                     }
                 }
             };
@@ -502,11 +507,7 @@ impl RenderCache {
                 continue;
             }
             let node = &graph[idx];
-            let radius = self
-                .nodes
-                .get(idx.index())
-                .map(|n| n.radius)
-                .unwrap_or(2.0);
+            let radius = self.nodes.get(idx.index()).map(|n| n.radius).unwrap_or(2.0);
             self.labels.push(LabelData {
                 x: node.location.x as f64,
                 y: node.location.y as f64 + radius + config.visual.label_offset,
@@ -729,7 +730,6 @@ pub fn draw_graph_view(
     }
 }
 
-
 fn draw_grid(
     ctx: &mut ratatui::widgets::canvas::Context,
     x: [f64; 2],
@@ -826,7 +826,12 @@ struct MinimapParams<'a> {
 /// characters, giving 2× vertical resolution compared to one-char-per-cell.
 /// World coordinates are mapped to integer sub-pixel positions with floor+clamp
 /// — fully deterministic, no boundary rounding flicker.
-fn draw_minimap(frame: &mut ratatui::Frame, area: Rect, params: MinimapParams<'_>, grid: &mut Vec<Option<Color>>) {
+fn draw_minimap(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    params: MinimapParams<'_>,
+    grid: &mut Vec<Option<Color>>,
+) {
     let (wx_min, wx_max, wy_min, wy_max) = params.graph_bounds;
     let aspect = area.width as f64 / area.height as f64;
     let vp_x = params.viewport.x_bounds(aspect);
@@ -1006,4 +1011,3 @@ fn draw_minimap(frame: &mut ratatui::Frame, area: Rect, params: MinimapParams<'_
         }
     }
 }
-

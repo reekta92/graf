@@ -4,8 +4,8 @@ use std::time::Instant;
 use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
-use super::viewport::CELL_ASPECT;
 use super::GraphState;
+use super::viewport::CELL_ASPECT;
 use crate::config::GrafConfig;
 
 #[derive(Debug)]
@@ -29,7 +29,9 @@ pub fn handle_graph_keys(
 ) -> Option<GraphAction> {
     let mut guard = state.write().unwrap_or_else(|e| e.into_inner());
 
-    let ctrl = key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
+    let ctrl = key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::CONTROL);
 
     match key.code {
         crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') => {
@@ -61,9 +63,10 @@ pub fn handle_graph_keys(
         }
         crossterm::event::KeyCode::Enter => {
             if let Some(idx) = guard.selected_node
-                && let Some(node) = guard.simulation.get_graph().node_weight(idx) {
-                    return Some(GraphAction::OpenFile(node.data.relative_path.clone()));
-                }
+                && let Some(node) = guard.simulation.get_graph().node_weight(idx)
+            {
+                return Some(GraphAction::OpenFile(node.data.relative_path.clone()));
+            }
         }
         crossterm::event::KeyCode::Char('a') => {
             let vp = guard.viewport.clone().auto_fit_from_graph(
@@ -181,10 +184,11 @@ pub fn handle_graph_mouse(
                     mouse_state.last_clicked_node = Some(node_idx);
 
                     if is_double_click
-                        && let Some(node) = guard.simulation.get_graph().node_weight(node_idx) {
-                            mouse_state.last_click_time = Some(Instant::now());
-                            return Some(GraphAction::OpenFile(node.data.relative_path.clone()));
-                        }
+                        && let Some(node) = guard.simulation.get_graph().node_weight(node_idx)
+                    {
+                        mouse_state.last_click_time = Some(Instant::now());
+                        return Some(GraphAction::OpenFile(node.data.relative_path.clone()));
+                    }
                 } else {
                     let mut guard = state.write().unwrap_or_else(|e| e.into_inner());
                     if is_double_click {

@@ -1,5 +1,5 @@
-use ratatui::layout::Rect;
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::app::AppState;
 use crate::config::GrafConfig;
@@ -154,7 +154,13 @@ fn draw_help(frame: &mut Frame, area: Rect, config: &GrafConfig) {
     frame.render_widget(paragraph, help_area);
 }
 
-fn draw_search(frame: &mut Frame, area: Rect, state: &AppState, config: &GrafConfig, colors: &crate::config::ThemeColors) {
+fn draw_search(
+    frame: &mut Frame,
+    area: Rect,
+    state: &AppState,
+    config: &GrafConfig,
+    colors: &crate::config::ThemeColors,
+) {
     let max_visible = config.search.max_visible;
     let result_count = state.search_results.len();
     let visible_count = result_count.min(max_visible);
@@ -244,7 +250,12 @@ fn draw_search(frame: &mut Frame, area: Rect, state: &AppState, config: &GrafCon
     frame.render_widget(paragraph, popup_area);
 }
 
-fn draw_reload_notification(frame: &mut Frame, area: Rect, msg: &str, colors: &crate::config::ThemeColors) {
+fn draw_reload_notification(
+    frame: &mut Frame,
+    area: Rect,
+    msg: &str,
+    colors: &crate::config::ThemeColors,
+) {
     let width = (msg.len() as u16 + 4).min(area.width);
     let height = 3u16;
     let x = (area.width.saturating_sub(width)) / 2;

@@ -11,7 +11,7 @@ use fdg_sim::petgraph::graph::NodeIndex;
 use fdg_sim::{ForceGraph, ForceGraphHelper, Simulation, SimulationParameters};
 
 use crate::config::GrafConfig;
-use crate::linker::{resolve_links, FileData};
+use crate::linker::{FileData, resolve_links};
 
 pub struct GraphNodeData {
     pub relative_path: String,
@@ -78,7 +78,9 @@ pub fn build_graph(files: &[FileData], config: &GrafConfig) -> ForceGraph<GraphN
         .iter()
         .filter(|f| {
             config.filter.exclude_tags.is_empty()
-                || f.tags.iter().all(|t| !config.filter.exclude_tags.contains(t))
+                || f.tags
+                    .iter()
+                    .all(|t| !config.filter.exclude_tags.contains(t))
         })
         .filter(|f| {
             let lc = links.get(&f.relative_path).map(|v| v.len()).unwrap_or(0);
@@ -140,7 +142,7 @@ pub fn search_nodes(
             }
         })
         .collect();
-    results.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+    results.sort_by_key(|a| a.1.to_lowercase());
     results.truncate(max_results);
     results
 }

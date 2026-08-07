@@ -14,9 +14,9 @@ use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::graph::input::GraphAction;
 
@@ -122,7 +122,8 @@ fn dispatch_action(
                 let mut all_errs = errors;
                 all_errs.extend(validation_errors);
                 app_state.config_errors = all_errs.clone();
-                app_state.config_reload_msg = Some(format!("Config error: {}", all_errs.join("; ")));
+                app_state.config_reload_msg =
+                    Some(format!("Config error: {}", all_errs.join("; ")));
             }
             app_state.config_reload_ttl = 60;
 
@@ -237,9 +238,10 @@ fn handle_event(
 
 fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
     if let Some(ref theme) = cli.theme
-        && let Ok(t) = theme.parse() {
-            config.visual.theme = t;
-        }
+        && let Ok(t) = theme.parse()
+    {
+        config.visual.theme = t;
+    }
     if let Some(max) = cli.max_nodes {
         config.filter.max_nodes = max;
     }
@@ -250,20 +252,23 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
         config.filter.exclude_tags = tags.split(',').map(|s| s.trim().to_string()).collect();
     }
     if let Some(ref mode) = cli.node_color_mode
-        && let Ok(m) = mode.parse() {
-            config.visual.node_color_mode = m;
-        }
+        && let Ok(m) = mode.parse()
+    {
+        config.visual.node_color_mode = m;
+    }
     if let Some(ref mode) = cli.edge_color_mode
-        && let Ok(m) = mode.parse() {
-            config.visual.edge_color_mode = m;
-        }
+        && let Ok(m) = mode.parse()
+    {
+        config.visual.edge_color_mode = m;
+    }
     if cli.labels {
         config.visual.label_mode = config::LabelMode::All;
     }
     if let Some(ref mode) = cli.label_mode
-        && let Ok(m) = mode.parse() {
-            config.visual.label_mode = m;
-        }
+        && let Ok(m) = mode.parse()
+    {
+        config.visual.label_mode = m;
+    }
     if cli.no_status {
         config.display.show_status_bar = false;
     }
@@ -277,13 +282,15 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
         config.visual.show_legend = false;
     }
     if let Some(ref bg) = cli.background
-        && let Ok(b) = bg.parse() {
-            config.visual.background = b;
-        }
+        && let Ok(b) = bg.parse()
+    {
+        config.visual.background = b;
+    }
     if let Some(ref style) = cli.border_style
-        && let Ok(s) = style.parse() {
-            config.display.border_style = s;
-        }
+        && let Ok(s) = style.parse()
+    {
+        config.display.border_style = s;
+    }
     if let Some(ref editor) = cli.editor {
         config.editor.command = editor.clone();
     }
@@ -345,16 +352,37 @@ fn main() -> Result<()> {
         if event::poll(std::time::Duration::from_millis(16))? {
             let ev = event::read()?;
             if let Some(action) = handle_event(ev, &mut app_state, &config, &guard)? {
-                dispatch_action(action, &mut app_state, &mut guard, &mut config, &mut running, &reload_ctx)?;
+                dispatch_action(
+                    action,
+                    &mut app_state,
+                    &mut guard,
+                    &mut config,
+                    &mut running,
+                    &reload_ctx,
+                )?;
             }
             while event::poll(std::time::Duration::ZERO)? {
                 let ev = event::read()?;
                 if let Some(action) = handle_event(ev, &mut app_state, &config, &guard)? {
                     if matches!(action, EventAction::Quit) {
-                        dispatch_action(action, &mut app_state, &mut guard, &mut config, &mut running, &reload_ctx)?;
+                        dispatch_action(
+                            action,
+                            &mut app_state,
+                            &mut guard,
+                            &mut config,
+                            &mut running,
+                            &reload_ctx,
+                        )?;
                         break;
                     }
-                    dispatch_action(action, &mut app_state, &mut guard, &mut config, &mut running, &reload_ctx)?;
+                    dispatch_action(
+                        action,
+                        &mut app_state,
+                        &mut guard,
+                        &mut config,
+                        &mut running,
+                        &reload_ctx,
+                    )?;
                 }
             }
         }
@@ -422,21 +450,21 @@ fn handle_search_keys(
         }
         KeyCode::Enter => {
             if let Some(&(idx, _)) = app_state.search_results.get(app_state.search_selected) {
-                    let (nx, ny) = if let Some(graph_state) = &app_state.graph_state {
-                        let guard = graph_state.read().unwrap_or_else(|e| e.into_inner());
-                        let graph = guard.simulation.get_graph();
-                        if let Some(node) = graph.node_weight(idx) {
-                            (node.location.x as f64, node.location.y as f64)
-                        } else {
-                            (0.0, 0.0)
-                        }
+                let (nx, ny) = if let Some(graph_state) = &app_state.graph_state {
+                    let guard = graph_state.read().unwrap_or_else(|e| e.into_inner());
+                    let graph = guard.simulation.get_graph();
+                    if let Some(node) = graph.node_weight(idx) {
+                        (node.location.x as f64, node.location.y as f64)
                     } else {
                         (0.0, 0.0)
-                    };
-                let Some(graph_state) = &app_state.graph_state else { return; };
-                let mut guard = graph_state
-                    .write()
-                    .unwrap_or_else(|e| e.into_inner());
+                    }
+                } else {
+                    (0.0, 0.0)
+                };
+                let Some(graph_state) = &app_state.graph_state else {
+                    return;
+                };
+                let mut guard = graph_state.write().unwrap_or_else(|e| e.into_inner());
                 guard.selected_node = Some(idx);
                 guard.viewport.center_on_node(nx as f32, ny as f32);
             }

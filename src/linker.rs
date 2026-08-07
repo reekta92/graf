@@ -3,14 +3,15 @@ use std::fs;
 use std::path::Path;
 
 use glob::glob;
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 static WIKILINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").unwrap());
 static FRONTMATTER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)^---\s*\n(.*?)\n---\s*\n").unwrap());
-static TAGS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^tags:\s*\[([^\]]*)\]").unwrap());
+static TAGS_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^tags:\s*\[([^\]]*)\]").unwrap());
 static TITLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?m)^title:\s*(?:"([^"]*)"|'([^']*)'|([^\s#]+))"#).unwrap());
 
@@ -121,14 +122,15 @@ fn extract_tags(content: &str) -> Vec<String> {
     if let Some(fm) = FRONTMATTER_RE.captures(content) {
         let fm_content = fm.get(1).unwrap().as_str();
         if let Some(tags_match) = TAGS_RE.captures(fm_content)
-            && let Some(tags_str) = tags_match.get(1) {
-                return tags_str
-                    .as_str()
-                    .split(',')
-                    .map(|t| t.trim().trim_matches('"').trim_matches('\'').to_string())
-                    .filter(|t| !t.is_empty())
-                    .collect();
-            }
+            && let Some(tags_str) = tags_match.get(1)
+        {
+            return tags_str
+                .as_str()
+                .split(',')
+                .map(|t| t.trim().trim_matches('"').trim_matches('\'').to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+        }
     }
     Vec::new()
 }
@@ -172,9 +174,11 @@ pub fn resolve_links(files: &[FileData], exclude_tags: &[String]) -> HashMap<Str
         let mut targets = Vec::new();
         for link in &file.wikilinks {
             if let Some(target) = title_to_path.get(&link.to_lowercase())
-                && target != &file.relative_path && seen.insert(target.clone()) {
-                    targets.push(target.clone());
-                }
+                && target != &file.relative_path
+                && seen.insert(target.clone())
+            {
+                targets.push(target.clone());
+            }
         }
         links.insert(file.relative_path.clone(), targets);
     }
