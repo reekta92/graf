@@ -5,6 +5,13 @@ mod graph;
 mod linker;
 mod ui;
 mod util;
+mod settings;
+mod theme;
+mod physics;
+mod viewport;
+mod render;
+mod input;
+mod wikilink;
 
 use std::io;
 use std::io::Write;
@@ -18,7 +25,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use crate::graph::input::GraphAction;
+use crate::input::GraphAction;
 
 struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
@@ -134,7 +141,7 @@ fn dispatch_action(
                 let files = linker::scan_markdown_files(
                     reload_ctx.cwd,
                     &config.filter.exclude_patterns,
-                    config.filter.max_nodes,
+                    config.max_node,
                 );
                 app_state.files = files;
                 app_state.refresh_simulation(config);
@@ -172,45 +179,9 @@ fn handle_event(
             }
 
             if let Some(graph_state) = &app_state.graph_state
-                && let Some(action) = graph::input::handle_graph_keys(graph_state, key, config)
+                && let Some(action) = crate::input::handle_graph_keys(graph_state, key, config)
             {
-                match action {
-                    GraphAction::Quit => return Ok(Some(EventAction::Quit)),
-                    GraphAction::ToggleHelp => {
-                        app_state.show_help = true;
-                        return Ok(None);
-                    }
-                    GraphAction::ToggleSearch => {
-                        app_state.search_active = true;
-                        return Ok(None);
-                    }
-                    GraphAction::ToggleMinimap => {
-                        app_state.show_minimap = !app_state.show_minimap;
-                        return Ok(None);
-                    }
-                    GraphAction::ToggleLegend => {
-                        app_state.show_legend = !app_state.show_legend;
-                        return Ok(None);
-                    }
-                    GraphAction::ToggleGrid => {
-                        app_state.show_grid = !app_state.show_grid;
-                        return Ok(None);
-                    }
-                    GraphAction::ToggleStatus => {
-                        app_state.show_status_bar = !app_state.show_status_bar;
-                        return Ok(None);
-                    }
-                    GraphAction::OpenFile(path) => {
-                        return Ok(Some(EventAction::OpenFile(path)));
-                    }
-                    GraphAction::Refresh => {
-                        app_state.refresh_simulation(config);
-                        return Ok(None);
-                    }
-                    GraphAction::ReloadConfig => {
-                        return Ok(Some(EventAction::ReloadConfig));
-                    }
-                }
+                return Ok(apply_graph_action(action, app_state, config));
             }
             Ok(None)
         }
@@ -219,20 +190,276 @@ fn handle_event(
                 return Ok(None);
             }
             if let Some(graph_state) = &app_state.graph_state
-                && let Some(action) = graph::input::handle_graph_mouse(
+                && let Some(action) = crate::input::handle_graph_mouse(
                     graph_state,
                     mouse_event,
                     frame_area(guard)?,
                     &mut app_state.graph_mouse_state,
                     config,
+                    app_state.show_status_bar,
                 )
-                && let GraphAction::OpenFile(path) = action
             {
-                return Ok(Some(EventAction::OpenFile(path)));
+                return Ok(apply_graph_action(action, app_state, config));
             }
             Ok(None)
         }
         _ => Ok(None),
+    }
+}
+
+fn apply_graph_action(
+    action: GraphAction,
+    app_state: &mut app::AppState,
+    config: &config::GrafConfig,
+) -> Option<EventAction> {
+    match action {
+        GraphAction::Quit => Some(EventAction::Quit),
+        GraphAction::ToggleHelp => {
+            app_state.show_help = true;
+            None
+        }
+        GraphAction::ToggleSearch => {
+            app_state.search_active = true;
+            None
+        }
+        GraphAction::ToggleMinimap => {
+            app_state.show_minimap = !app_state.show_minimap;
+            None
+        }
+        GraphAction::ToggleLegend => {
+            app_state.show_legend = !app_state.show_legend;
+            None
+        }
+        GraphAction::ToggleGrid => {
+            app_state.show_grid = !app_state.show_grid;
+            None
+        }
+        GraphAction::ToggleStatus => {
+            app_state.show_status_bar = !app_state.show_status_bar;
+            None
+        }
+        GraphAction::OpenFile(path) => Some(EventAction::OpenFile(path)),
+        GraphAction::Refresh => {
+            app_state.refresh_simulation(config);
+            None
+        }
+        GraphAction::ReloadConfig => Some(EventAction::ReloadConfig),
+        GraphAction::MenuAction(item) => {
+            execute_menu_action(app_state, config, item);
+            None
+        }
+        GraphAction::ConnectionEvent {
+            source_id,
+            target_title,
+            create,
+        } => {
+            apply_connection(app_state, &source_id, &target_title, create);
+            None
+        }
+        GraphAction::ClearFocus => {
+            app_state.exit_focus(config);
+            None
+        }
+        // Preview/looking-glass are clin-host features.
+        GraphAction::TogglePreview | GraphAction::ToggleLookingGlass => None,
+        // Stateful actions are consumed inside the engine.
+        _ => None,
+    }
+}
+
+fn execute_menu_action(
+    app_state: &mut app::AppState,
+    config: &config::GrafConfig,
+    item: crate::graph::MenuItem,
+) {
+    use crate::graph::MenuItem;
+    use crate::graph::ModeBanner;
+    match item {
+        MenuItem::CreateConnection => {
+            if let Some(gs) = &app_state.graph_state {
+                let mut g = gs.write();
+                if let Some(src) = g.selection.primary {
+                    g.connection_source = Some(src);
+                    g.mode_banner = Some(ModeBanner::CreateConnection);
+                    g.context_menu = None;
+                }
+            }
+        }
+        MenuItem::DeleteConnection => {
+            if let Some(gs) = &app_state.graph_state {
+                let mut g = gs.write();
+                if let Some(src) = g.selection.primary {
+                    g.deleting_connection_source = Some(src);
+                    g.mode_banner = Some(ModeBanner::DeleteConnection);
+                    g.context_menu = None;
+                }
+            }
+        }
+        MenuItem::LocalGraph => {
+            let ids: std::collections::HashSet<String> = {
+                let Some(gs) = &app_state.graph_state else {
+                    return;
+                };
+                let g = gs.read();
+                let mut ids = std::collections::HashSet::new();
+                if let Some(anchor) = g.selection.primary {
+                    let graph_ref = g.simulation.get_graph();
+                    if let Some(n) = graph_ref.node_weight(anchor) {
+                        ids.insert(n.data.id.clone());
+                    }
+                    for nbr in graph_ref.neighbors(anchor) {
+                        if let Some(n) = graph_ref.node_weight(nbr) {
+                            ids.insert(n.data.id.clone());
+                        }
+                    }
+                }
+                ids
+            };
+            if !ids.is_empty() {
+                app_state.enter_focus(config, ids, ModeBanner::LocalGraph);
+            }
+        }
+        MenuItem::ShowGroup => {
+            let ids: std::collections::HashSet<String> = {
+                let Some(gs) = &app_state.graph_state else {
+                    return;
+                };
+                let g = gs.read();
+                g.selection
+                    .extra
+                    .iter()
+                    .chain(g.selection.primary.iter())
+                    .filter_map(|idx| g.simulation.get_graph().node_weight(*idx))
+                    .map(|n| n.data.id.clone())
+                    .collect()
+            };
+            if !ids.is_empty() {
+                app_state.enter_focus(config, ids, ModeBanner::GroupedGraph);
+            }
+        }
+        MenuItem::DeleteNode => {
+            let ids: Vec<String> = {
+                let Some(gs) = &app_state.graph_state else {
+                    return;
+                };
+                let g = gs.read();
+                let mut v = Vec::new();
+                if let Some(idx) = g.selection.primary
+                    && let Some(n) = g.simulation.get_graph().node_weight(idx)
+                {
+                    v.push(n.data.id.clone());
+                }
+                for idx in &g.selection.extra {
+                    if let Some(n) = g.simulation.get_graph().node_weight(*idx) {
+                        let id = n.data.id.clone();
+                        if !v.contains(&id) {
+                            v.push(id);
+                        }
+                    }
+                }
+                v
+            };
+            // graf bin has no note storage: drop the notes from the graph
+            // view only (files on disk are untouched).
+            app_state.files.retain(|f| !ids.contains(&f.relative_path));
+            app_state.refresh_simulation(config);
+        }
+    }
+}
+
+fn apply_connection(
+    app_state: &mut app::AppState,
+    source_id: &str,
+    target_title: &str,
+    create: bool,
+) {
+    // Direction resolution for delete: if the source note does not link to the
+    // target but the target links to the source, edit the target instead.
+    let mut resolved_source = source_id.to_string();
+    let mut resolved_target = target_title.to_string();
+    if !create {
+        let source_has_link = app_state.files.iter().any(|f| {
+            f.relative_path == source_id
+                && f.wikilinks
+                    .iter()
+                    .any(|l| l.eq_ignore_ascii_case(target_title))
+        });
+        if !source_has_link {
+            let target_file = app_state
+                .files
+                .iter()
+                .find(|f| f.title.eq_ignore_ascii_case(target_title));
+            if let Some(target_file) = target_file {
+                let target_id = target_file.relative_path.clone();
+                if let Some(source_file) = app_state
+                    .files
+                    .iter()
+                    .find(|f| f.relative_path == source_id)
+                {
+                    let source_title = source_file.title.clone();
+                    if target_file
+                        .wikilinks
+                        .iter()
+                        .any(|l| l.eq_ignore_ascii_case(&source_title))
+                    {
+                        resolved_source = target_id;
+                        resolved_target = source_title;
+                    }
+                }
+            }
+        }
+    }
+
+    // 1. Write the wikilink edit to the file on disk.
+    let path = app_state.base_dir.join(&resolved_source);
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        let new_content = if create {
+            crate::wikilink::add_wikilink(&content, &resolved_target)
+        } else {
+            crate::wikilink::remove_wikilink(&content, &resolved_target)
+        };
+        if new_content != content {
+            let _ = std::fs::write(&path, &new_content);
+        }
+    }
+
+    // 2. Keep the file list in sync until the next full rescan.
+    if let Some(f) = app_state
+        .files
+        .iter_mut()
+        .find(|f| f.relative_path == resolved_source)
+    {
+        if create {
+            if !f
+                .wikilinks
+                .iter()
+                .any(|l| l.eq_ignore_ascii_case(&resolved_target))
+            {
+                f.wikilinks.push(resolved_target.clone());
+            }
+        } else {
+            f.wikilinks
+                .retain(|l| !l.eq_ignore_ascii_case(&resolved_target));
+        }
+    }
+
+    // 3. Apply the edge to the live simulation (no rebuild: positions and
+    // viewport are preserved).
+    if let Some(gs) = app_state.graph_state.as_ref() {
+        let mut g = gs.write();
+        let graph = g.simulation.get_graph();
+        let src = graph
+            .node_indices()
+            .find(|&i| graph[i].data.id == resolved_source);
+        let tgt = graph
+            .node_indices()
+            .find(|&i| graph[i].data.title.eq_ignore_ascii_case(&resolved_target));
+        if let (Some(s), Some(t)) = (src, tgt) {
+            crate::graph::apply_connection_change(&mut g.simulation, s, t, create);
+            let mut cache = g.render_cache.lock();
+            cache.topology_dirty = true;
+            cache.minimap_dirty = true;
+        }
     }
 }
 
@@ -243,7 +470,7 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
         config.visual.theme = t;
     }
     if let Some(max) = cli.max_nodes {
-        config.filter.max_nodes = max;
+        config.max_node = max;
     }
     if let Some(ref patterns) = cli.exclude {
         config.filter.exclude_patterns = patterns.clone();
@@ -292,7 +519,7 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
         config.display.border_style = s;
     }
     if let Some(ref editor) = cli.editor {
-        config.editor.command = editor.clone();
+        config.editor.command = Some(editor.clone());
     }
 }
 
@@ -326,7 +553,7 @@ fn main() -> Result<()> {
     let files = linker::scan_markdown_files(
         &cwd,
         &config.filter.exclude_patterns,
-        config.filter.max_nodes,
+        config.max_node,
     );
 
     if files.is_empty() {
@@ -335,7 +562,7 @@ fn main() -> Result<()> {
     }
 
     let mut guard = TerminalGuard::new()?;
-    let mut app_state = app::AppState::new(&config, files, config_errors);
+    let mut app_state = app::AppState::new(&config, cwd.clone(), files, config_errors);
     let mut running = true;
 
     let reload_ctx = ReloadCtx {
@@ -419,8 +646,12 @@ fn open_file_in_editor(relative_path: &str, config: &config::GrafConfig) {
         return;
     }
 
-    let editor = if !config.editor.command.is_empty() {
-        config.editor.command.clone()
+    let editor = if let Some(cmd) = &config.editor.command {
+        if !cmd.is_empty() {
+            cmd.clone()
+        } else {
+            std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string())
+        }
     } else {
         std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string())
     };
@@ -451,7 +682,7 @@ fn handle_search_keys(
         KeyCode::Enter => {
             if let Some(&(idx, _)) = app_state.search_results.get(app_state.search_selected) {
                 let (nx, ny) = if let Some(graph_state) = &app_state.graph_state {
-                    let guard = graph_state.read().unwrap_or_else(|e| e.into_inner());
+                    let guard = graph_state.read();
                     let graph = guard.simulation.get_graph();
                     if let Some(node) = graph.node_weight(idx) {
                         (node.location.x as f64, node.location.y as f64)
@@ -464,8 +695,8 @@ fn handle_search_keys(
                 let Some(graph_state) = &app_state.graph_state else {
                     return;
                 };
-                let mut guard = graph_state.write().unwrap_or_else(|e| e.into_inner());
-                guard.selected_node = Some(idx);
+                let mut guard = graph_state.write();
+                guard.selection.select_only(idx);
                 guard.viewport.center_on_node(nx as f32, ny as f32);
             }
             app_state.search_active = false;
@@ -600,7 +831,7 @@ fn delete_word_back(app_state: &mut app::AppState) {
 
 fn run_search(app_state: &mut app::AppState, config: &config::GrafConfig) {
     if let Some(graph_state) = &app_state.graph_state {
-        let guard = graph_state.read().unwrap_or_else(|e| e.into_inner());
+        let guard = graph_state.read();
         app_state.search_results = graph::search_nodes(
             &guard.simulation,
             &app_state.search_query,

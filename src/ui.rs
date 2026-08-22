@@ -21,14 +21,66 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
     let colors = config.theme_colors();
 
     if let Some(graph_state) = &state.graph_state {
-        let guard = graph_state.read().unwrap_or_else(|e| e.into_inner());
-        let flags = crate::graph::render::FeatureFlags {
+        let guard = graph_state.read();
+        let flags = crate::render::FeatureFlags {
             show_legend: state.show_legend,
-            show_grid: state.show_grid,
+            grid: state.show_grid,
             show_minimap: state.show_minimap,
             show_status_bar: state.show_status_bar,
         };
-        crate::graph::render::draw_graph_view(frame, &guard, config, &flags);
+        crate::render::draw_graph_view(frame, area, &guard, config, &colors, &flags);
+
+        // Status bar lives in the row `canvas_area` reserved for it.
+        if state.show_status_bar {
+            let canvas = crate::render::canvas_area(area, true);
+            let graph = guard.simulation.get_graph();
+            let selected_title = guard
+                .selection
+                .primary
+                .and_then(|idx| graph.node_weight(idx))
+                .map(|n| n.data.title.clone());
+            let status = config.expand_status(
+                graph.node_count(),
+                graph.edge_count(),
+                selected_title.as_deref(),
+                Some(guard.viewport.zoom * 40.0),
+                Some(guard.viewport.zoom),
+            );
+            let paragraph = ratatui::widgets::Paragraph::new(status).style(
+                ratatui::style::Style::default()
+                    .fg(colors.status_bar_color)
+                    .bg(colors.background_color.unwrap_or(ratatui::style::Color::Reset)),
+            );
+            frame.render_widget(
+                paragraph,
+                ratatui::layout::Rect::new(canvas.x, canvas.y + canvas.height, canvas.width, 1),
+            );
+        }
+
+        // Connection/focus mode banner, centered on the top row.
+        if let Some(mode) = guard.mode_banner {
+            let text: &'static str = match mode {
+                crate::graph::ModeBanner::CreateConnection => {
+                    " CONNECTION MODE — select target "
+                }
+                crate::graph::ModeBanner::DeleteConnection => {
+                    " DELETE CONNECTION MODE — select target "
+                }
+                crate::graph::ModeBanner::LocalGraph => " LOCAL GRAPH ONLY ",
+                crate::graph::ModeBanner::GroupedGraph => " GROUPED GRAPH ONLY ",
+                crate::graph::ModeBanner::BoxSelect => " BOX SELECT — drag, release ",
+            };
+            let w = (text.chars().count() as u16 + 2).min(area.width);
+            let x = area.x + area.width.saturating_sub(w) / 2;
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(text).style(
+                    ratatui::style::Style::default()
+                        .fg(ratatui::style::Color::Black)
+                        .bg(ratatui::style::Color::Yellow),
+                ),
+                ratatui::layout::Rect::new(x, area.y, w, 1),
+            );
+        }
     }
 
     if state.search_active {
@@ -159,7 +211,7 @@ fn draw_search(
     area: Rect,
     state: &AppState,
     config: &GrafConfig,
-    colors: &crate::config::ThemeColors,
+    colors: &crate::theme::ThemeColors,
 ) {
     let max_visible = config.search.max_visible;
     let result_count = state.search_results.len();
@@ -254,7 +306,7 @@ fn draw_reload_notification(
     frame: &mut Frame,
     area: Rect,
     msg: &str,
-    colors: &crate::config::ThemeColors,
+    colors: &crate::theme::ThemeColors,
 ) {
     let width = (msg.len() as u16 + 4).min(area.width);
     let height = 3u16;

@@ -1,16 +1,20 @@
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::RwLock;
+use parking_lot::RwLock;
 
 use fdg_sim::petgraph::graph::NodeIndex;
 
 use crate::config::GrafConfig;
-use crate::graph::input::GraphMouseState;
+use crate::input::GraphMouseState;
 use crate::linker::FileData;
 
 pub struct AppState {
     pub graph_state: Option<Arc<RwLock<crate::graph::GraphState>>>,
     pub graph_kill_tx: Option<std::sync::mpsc::Sender<()>>,
     pub graph_mouse_state: GraphMouseState,
+    pub base_dir: PathBuf,
+    pub focus_note_ids: Option<HashSet<String>>,
     pub files: Vec<FileData>,
     pub show_help: bool,
     pub config_errors: Vec<String>,
@@ -19,25 +23,50 @@ pub struct AppState {
     pub search_results: Vec<(NodeIndex, String)>,
     pub search_selected: usize,
     pub search_cursor: usize,
-    pub show_minimap: bool,
     pub show_legend: bool,
+    pub show_minimap: bool,
     pub show_grid: bool,
     pub show_status_bar: bool,
     pub config_reload_msg: Option<String>,
-    pub config_reload_ttl: u8,
+    pub config_reload_ttl: u16,
+}
+
+fn node_specs(files: &[FileData]) -> Vec<crate::graph::NodeSpec> {
+    files
+        .iter()
+        .map(|f| crate::graph::NodeSpec {
+            id: f.relative_path.clone(),
+            title: f.title.clone(),
+            tags: f.tags.clone(),
+            folder: std::path::PathBuf::from(&f.relative_path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            links: f.wikilinks.clone(),
+        })
+        .collect()
 }
 
 impl AppState {
-    pub fn new(config: &GrafConfig, files: Vec<FileData>, config_errors: Vec<String>) -> Self {
-        let graph_state = crate::graph::GraphState::new(&files, config);
+    pub fn new(
+        config: &GrafConfig,
+        base_dir: PathBuf,
+        files: Vec<FileData>,
+        config_errors: Vec<String>,
+    ) -> Self {
+        let specs = node_specs(&files);
+        let graph_state =
+            crate::graph::GraphState::from_specs(&specs, config).expect("Failed to build graph");
         let state = Arc::new(RwLock::new(graph_state));
-        let (kill_tx, kill_rx) = std::sync::mpsc::channel();
-        crate::graph::physics::start_physics(state.clone(), config, kill_rx);
+        let kill_tx = crate::physics::start_physics(state.clone(), config);
 
         Self {
             graph_state: Some(state),
-            graph_kill_tx: Some(kill_tx),
+            graph_kill_tx: kill_tx,
             graph_mouse_state: GraphMouseState::default(),
+            base_dir,
+            focus_note_ids: None,
             files,
             show_help: false,
             config_errors,
@@ -59,15 +88,49 @@ impl AppState {
         if let Some(kill_tx) = self.graph_kill_tx.take() {
             let _ = kill_tx.send(());
         }
-        let graph_state = crate::graph::GraphState::new(&self.files, config);
+        // Focus (local/group) subsets must render every selected node,
+        // including ones without connections, regardless of show_orphan.
+        let mut effective = config.clone();
+        if self.focus_note_ids.is_some() {
+            effective.filter.show_orphan = true;
+        }
+        let files: Vec<FileData> = match &self.focus_note_ids {
+            Some(ids) => self
+                .files
+                .iter()
+                .filter(|f| ids.contains(&f.relative_path))
+                .cloned()
+                .collect(),
+            None => self.files.clone(),
+        };
+        let specs = node_specs(&files);
+        let graph_state = crate::graph::GraphState::from_specs(&specs, &effective)
+            .expect("Failed to build graph");
         let state = Arc::new(RwLock::new(graph_state));
-        let (kill_tx, kill_rx) = std::sync::mpsc::channel();
-        crate::graph::physics::start_physics(state.clone(), config, kill_rx);
+        let kill_tx = crate::physics::start_physics(state.clone(), &effective);
         self.graph_state = Some(state);
-        self.graph_kill_tx = Some(kill_tx);
+        self.graph_kill_tx = kill_tx;
         // Clear search state — old NodeIndex values are invalid in the new graph
         self.search_results.clear();
         self.search_selected = 0;
+    }
+
+    pub fn enter_focus(
+        &mut self,
+        config: &GrafConfig,
+        ids: HashSet<String>,
+        mode: crate::graph::ModeBanner,
+    ) {
+        self.focus_note_ids = Some(ids);
+        self.refresh_simulation(config);
+        if let Some(gs) = &self.graph_state {
+            gs.write().mode_banner = Some(mode);
+        }
+    }
+
+    pub fn exit_focus(&mut self, config: &GrafConfig) {
+        self.focus_note_ids = None;
+        self.refresh_simulation(config);
     }
 
     pub fn shutdown(&mut self) {
