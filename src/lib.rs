@@ -9,6 +9,8 @@ pub mod viewport;
 pub mod render;
 pub mod input;
 pub use input::{GraphAction, GraphKeymap, GraphMouseState, apply_action, handle_graph_keys, handle_graph_mouse};
+pub use physics::{start_physics, simulation_step};
+pub use render::{RenderCache, FeatureFlags, draw_graph_view, canvas_area, compute_graph_bounds, compute_minimap_area};
 
 pub use settings::{Settings, Background, NodeColorMode, EdgeColorMode, LabelMode, NodeSizeMode, CanvasMarker, NodeShape, LegendPosition, PhysicsTickRate};
 pub mod wikilink;
