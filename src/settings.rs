@@ -139,7 +139,6 @@ impl From<CanvasMarker> for ratatui::symbols::Marker {
             CanvasMarker::Braille => ratatui::symbols::Marker::Braille,
             CanvasMarker::HalfBlock => ratatui::symbols::Marker::HalfBlock,
             CanvasMarker::Dot => ratatui::symbols::Marker::Dot,
-            _ => ratatui::symbols::Marker::Braille, // Wildcard for non_exhaustive
         }
     }
 }
