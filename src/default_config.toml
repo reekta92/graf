@@ -1,5 +1,9 @@
 # graf configuration
 
+# Top-level graph limits
+# max_node = 500
+# preview_enabled = false
+
 [visual]
 theme = "onedark"
 background = "transparent"
@@ -16,10 +20,14 @@ show_minimap = false
 minimap_position = "top_right"
 minimap_width = 24
 minimap_height = 12
+minimap_marker = "half_block"
 canvas_marker = "braille"
 node_shape = "circle"
 label_offset = 4.0
 grid_divisions = 10
+show_looking_glass = true
+looking_glass_width = 16
+looking_glass_height = 10
 
 [visual.colors]
 # node_color = "#ff6600"
@@ -35,12 +43,13 @@ grid_divisions = 10
 
 [physics]
 # ideal_distance = 80.0
+# tick_rate = "auto"
+# timestep = 0.016
 # damping = 0.95
 # max_iterations = 800
 # gravity = 0.01
 # cooling = true
 # prevent_overlapping = true
-# timestep = 0.016
 # thread_sleep_ms = 16
 
 [interaction]
@@ -60,7 +69,7 @@ grid_divisions = 10
 # exclude_tags = ["draft", "private"]
 # exclude_patterns = ["templates/", "private/"]
 # min_links = 0
-# max_nodes = 500
+# show_orphan = false
 
 [legend]
 position = "bottom_right"

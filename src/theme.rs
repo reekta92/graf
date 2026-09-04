@@ -1,6 +1,24 @@
 use ratatui::style::Color;
+use crate::settings::{Background, Theme};
 
-use super::{Background, Theme, ThemeColors};
+// ── Theme Colors ─────────────────────────────────────────────────────────────
+
+pub struct ThemeColors {
+    pub node_colors: Vec<Color>,
+    pub edge_color: Color,
+    pub border_color: Color,
+    pub title_color: Color,
+    pub label_color: Color,
+    pub legend_text_color: Color,
+    pub legend_border_color: Color,
+    pub selected_indicator_color: Color,
+    pub grid_color: Color,
+    pub background_color: Option<Color>,
+    pub status_bar_color: Color,
+    pub minimap_border_color: Color,
+    pub minimap_viewport_color: Color,
+    pub minimap_bg_color: Option<Color>,
+}
 
 struct ThemePalette {
     nodes: [[u8; 3]; 8],
@@ -259,6 +277,7 @@ fn default_theme_colors(background: Background) -> ThemeColors {
     }
 }
 
+/// Base palette for a named theme, before `visual.colors` overrides.
 pub fn theme_colors(theme: &Theme, background: Background) -> ThemeColors {
     match theme {
         Theme::Default => default_theme_colors(background),
@@ -272,5 +291,48 @@ pub fn theme_colors(theme: &Theme, background: Background) -> ThemeColors {
         Theme::Everforest => PALETTES[7].build(background),
         Theme::Kanagawa => PALETTES[8].build(background),
         Theme::Solarized => PALETTES[9].build(background),
+    }
+}
+
+impl ThemeColors {
+    /// Resolve theme colors from settings: named palette + explicit overrides.
+    pub fn resolve(settings: &crate::settings::Settings) -> Self {
+        let mut colors = theme_colors(&settings.visual.theme, settings.visual.background.clone());
+
+        if let Some(c) = settings.visual.colors.node_color {
+            colors.node_colors = vec![c];
+        }
+        if let Some(c) = settings.visual.colors.edge_color {
+            colors.edge_color = c;
+        }
+        if let Some(c) = settings.visual.colors.label_color {
+            colors.label_color = c;
+        }
+        if let Some(c) = settings.visual.colors.selection_ring_color {
+            colors.selected_indicator_color = c;
+        }
+        if let Some(c) = settings.visual.colors.border_color {
+            colors.border_color = c;
+            colors.legend_border_color = c;
+            colors.minimap_border_color = c;
+        }
+        if let Some(c) = settings.visual.colors.title_color {
+            colors.title_color = c;
+        }
+        if let Some(c) = settings.visual.colors.grid_color {
+            colors.grid_color = c;
+        }
+        if let Some(c) = settings.visual.colors.legend_text_color {
+            colors.legend_text_color = c;
+        }
+        if let Some(c) = settings.visual.colors.status_bar_color {
+            colors.status_bar_color = c;
+        }
+        if let Some(c) = settings.visual.colors.background_color {
+            colors.background_color = Some(c);
+            colors.minimap_bg_color = Some(c);
+        }
+
+        colors
     }
 }
