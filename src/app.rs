@@ -12,6 +12,7 @@ use crate::linker::FileData;
 pub struct AppState {
     pub graph_state: Option<Arc<RwLock<crate::graph::GraphState>>>,
     pub graph_kill_tx: Option<std::sync::mpsc::Sender<()>>,
+    pub keymap: crate::input::GraphKeymap,
     pub graph_mouse_state: GraphMouseState,
     pub base_dir: PathBuf,
     pub focus_note_ids: Option<HashSet<String>>,
@@ -66,6 +67,7 @@ impl AppState {
             graph_kill_tx: kill_tx,
             graph_mouse_state: GraphMouseState::default(),
             base_dir,
+            keymap: crate::input::GraphKeymap::default(),
             focus_note_ids: None,
             files,
             show_help: false,
