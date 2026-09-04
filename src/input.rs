@@ -160,13 +160,70 @@ fn auto_fit_padding(settings: &Settings) -> f64 {
     }
 }
 
-/// Hardcoded default key handler (graf bin). Hosts with their own keybind
-/// system should drive [`apply_action`] instead.
+/// Key bindings for graph actions. `Default` reproduces the standalone
+/// binary's historical hardcoded map.
+#[derive(Debug, Clone)]
+pub struct GraphKeymap {
+    pub bindings: Vec<(KeyEvent, GraphAction)>,
+}
+
+fn binding(code: KeyCode, ctrl: bool, action: GraphAction) -> (KeyEvent, GraphAction) {
+    (
+        KeyEvent::new(
+            code,
+            if ctrl {
+                crossterm::event::KeyModifiers::CONTROL
+            } else {
+                crossterm::event::KeyModifiers::NONE
+            },
+        ),
+        action,
+    )
+}
+
+impl Default for GraphKeymap {
+    fn default() -> Self {
+        Self {
+            bindings: vec![
+                binding(KeyCode::Esc, false, Quit),
+                binding(KeyCode::Char('q'), false, Quit),
+                binding(KeyCode::Up, false, PanUp),
+                binding(KeyCode::Char('k'), false, PanUp),
+                binding(KeyCode::Down, false, PanDown),
+                binding(KeyCode::Char('j'), false, PanDown),
+                binding(KeyCode::Left, false, PanLeft),
+                binding(KeyCode::Char('h'), false, PanLeft),
+                binding(KeyCode::Right, false, PanRight),
+                binding(KeyCode::Char('l'), false, PanRight),
+                binding(KeyCode::Char('+'), false, ZoomIn),
+                binding(KeyCode::Char('='), false, ZoomIn),
+                binding(KeyCode::Char('j'), true, ZoomIn),
+                binding(KeyCode::Char('-'), false, ZoomOut),
+                binding(KeyCode::Char('k'), true, ZoomOut),
+                binding(KeyCode::Enter, false, OpenSelected),
+                binding(KeyCode::Char('a'), false, AutoFit),
+                binding(KeyCode::Char('r'), true, ReloadConfig),
+                binding(KeyCode::Char('r'), false, Refresh),
+                binding(KeyCode::Char('f'), false, ToggleSearch),
+                binding(KeyCode::Char('?'), false, ToggleHelp),
+                binding(KeyCode::Char('M'), false, ToggleMinimap),
+                binding(KeyCode::Char('L'), false, ToggleLegend),
+                binding(KeyCode::Char('G'), false, ToggleGrid),
+                binding(KeyCode::Char('S'), false, ToggleStatus),
+            ],
+        }
+    }
+}
+
+/// Key handler dispatching through a caller-supplied [`GraphKeymap`]; the
+/// context-menu and Escape fallthrough branches run before the keymap lookup.
 pub fn handle_graph_keys(
     state: &Arc<RwLock<GraphState>>,
     key: KeyEvent,
     settings: &Settings,
+    keymap: &GraphKeymap,
 ) -> Option<GraphAction> {
+
     // Context menu open: keys drive the menu exclusively.
     {
         let mut guard = state.write();
@@ -227,32 +284,11 @@ pub fn handle_graph_keys(
         }
     }
 
-    let ctrl = key
-        .modifiers
-        .contains(crossterm::event::KeyModifiers::CONTROL);
-
-    let action = match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => GraphAction::Quit,
-        KeyCode::Up | KeyCode::Char('k') if !ctrl => GraphAction::PanUp,
-        KeyCode::Down | KeyCode::Char('j') if !ctrl => GraphAction::PanDown,
-        KeyCode::Left | KeyCode::Char('h') if !ctrl => GraphAction::PanLeft,
-        KeyCode::Right | KeyCode::Char('l') if !ctrl => GraphAction::PanRight,
-        KeyCode::Char('+') | KeyCode::Char('=') => GraphAction::ZoomIn,
-        KeyCode::Char('j') if ctrl => GraphAction::ZoomIn,
-        KeyCode::Char('-') => GraphAction::ZoomOut,
-        KeyCode::Char('k') if ctrl => GraphAction::ZoomOut,
-        KeyCode::Enter => GraphAction::OpenSelected,
-        KeyCode::Char('a') => GraphAction::AutoFit,
-        KeyCode::Char('r') if ctrl => GraphAction::ReloadConfig,
-        KeyCode::Char('r') => GraphAction::Refresh,
-        KeyCode::Char('f') => GraphAction::ToggleSearch,
-        KeyCode::Char('?') => GraphAction::ToggleHelp,
-        KeyCode::Char('M') => GraphAction::ToggleMinimap,
-        KeyCode::Char('L') => GraphAction::ToggleLegend,
-        KeyCode::Char('G') => GraphAction::ToggleGrid,
-        KeyCode::Char('S') => GraphAction::ToggleStatus,
-        _ => return None,
-    };
+    let action = keymap
+        .bindings
+        .iter()
+        .find(|(k, _)| k.code == key.code && k.modifiers == key.modifiers)
+        .map(|(_, action)| action.clone())?;
 
     apply_action(state, action, settings)
 }
@@ -718,6 +754,42 @@ mod tests {
     use super::*;
     use crate::graph::NodeSpec;
     use crossterm::event::KeyModifiers;
+    #[test]
+    fn test_keymap_injection_overrides_bindings() {
+        let state = setup_mock_graph_state(&[("a", &[]), ("b", &["a"])]);
+        let settings = Settings::default();
+        let mut keymap = GraphKeymap::default();
+        // Unbind `q` and `+`; bind `z` to Quit instead.
+        keymap.bindings.retain(|(k, _)| {
+            k.code != KeyCode::Char('q') && k.code != KeyCode::Char('+')
+        });
+        keymap.bindings.push(binding(KeyCode::Char('z'), false, Quit));
+
+        // Injected binding dispatches (Quit is host-level: returned as-is).
+        let z = handle_graph_keys(
+            &state,
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+            &settings,
+            &keymap,
+        );
+        assert_eq!(z, Some(Quit));
+
+        // Removed defaults no longer fire.
+        let q = handle_graph_keys(
+            &state,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            &settings,
+            &keymap,
+        );
+        assert_eq!(q, None);
+        let plus = handle_graph_keys(
+            &state,
+            KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE),
+            &settings,
+            &keymap,
+        );
+        assert_eq!(plus, None);
+    }
     use parking_lot::RwLock;
 
     fn setup_mock_graph_state(nodes: &[(&str, &[&str])]) -> Arc<RwLock<GraphState>> {

@@ -1025,7 +1025,7 @@ mod tests {
     fn test_menu_item_from_label() {
         assert!(matches!(menu_item_from_label("Create Connection"), Some(MenuItem::CreateConnection)));
         assert!(matches!(menu_item_from_label("Delete Connection"), Some(MenuItem::DeleteConnection)));
-        assert!(matches!(menu_item_from_label("Invalid"), None));
+        assert!(menu_item_from_label("Invalid").is_none());
     }
 
     #[test]

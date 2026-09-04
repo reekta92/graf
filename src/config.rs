@@ -1,6 +1,6 @@
 use std::fs;
 // Re-export library types for binary compatibility
-pub use crate::settings::{Background, Theme, NodeColorMode, EdgeColorMode, LabelMode, NodeSizeMode, CanvasMarker, NodeShape, LegendPosition, PhysicsTickRate};
+pub use crate::settings::{LabelMode, LegendPosition};
 use std::path::PathBuf;
 
 use directories::ProjectDirs;
@@ -17,16 +17,6 @@ impl GrafConfig {
 
     pub fn theme_colors(&self) -> crate::theme::ThemeColors {
         crate::theme::ThemeColors::resolve(self)
-    }
-
-    pub fn expand_border_title(&self) -> String {
-        let mut title = self.display.border_title.clone();
-        let cwd = std::env::current_dir()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-            .unwrap_or_default();
-        title = title.replace("{cwd}", &cwd);
-        title
     }
 
     pub fn expand_status(
@@ -275,15 +265,11 @@ impl GrafConfig {
         if let Ok(s) = env::var("GRAF_EDITOR_COMMAND") {
             self.editor.command = Some(s);
         }
-        if let Ok(s) = env::var("GRAF_PREVIEW_ENABLED") {
-            if let Ok(v) = s.parse::<bool>() {
-                self.preview_enabled = v;
-            }
+        if let Some(v) = env::var("GRAF_PREVIEW_ENABLED").ok().and_then(|s| s.parse::<bool>().ok()) {
+            self.preview_enabled = v;
         }
-        if let Ok(s) = env::var("GRAF_MAX_NODE") {
-            if let Ok(v) = s.parse::<usize>() {
-                self.max_node = v;
-            }
+        if let Some(v) = env::var("GRAF_MAX_NODE").ok().and_then(|s| s.parse::<usize>().ok()) {
+            self.max_node = v;
         }
     }
 }

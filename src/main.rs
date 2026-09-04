@@ -1,16 +1,27 @@
 mod app;
 mod cli;
 mod config;
+// Engine modules are duplicated from the lib target; items unused by the bin
+// are part of the lib API surface.
+#[allow(dead_code)]
 mod graph;
+#[allow(dead_code)]
 mod linker;
 mod ui;
 mod util;
+#[allow(dead_code)]
 mod settings;
+#[allow(dead_code)]
 mod theme;
+#[allow(dead_code)]
 mod physics;
+#[allow(dead_code)]
 mod viewport;
+#[allow(dead_code)]
 mod render;
+#[allow(dead_code)]
 mod input;
+#[allow(dead_code)]
 mod wikilink;
 
 use std::io;
@@ -179,7 +190,7 @@ fn handle_event(
             }
 
             if let Some(graph_state) = &app_state.graph_state
-                && let Some(action) = crate::input::handle_graph_keys(graph_state, key, config)
+                && let Some(action) = crate::input::handle_graph_keys(graph_state, key, config, &app_state.keymap)
             {
                 return Ok(apply_graph_action(action, app_state, config));
             }
