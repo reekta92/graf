@@ -36,7 +36,7 @@ path = "src/main.rs"
 ratatui = "0.30"
 crossterm = "0.29"
 fdg-sim = "0.9"
-petgraph = "0.6"
+petgraph = "0.8"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 regex = "1"
