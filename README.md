@@ -7,15 +7,6 @@ A terminal-based force-directed graph visualizer for markdown wikilinks. Run `gr
 
 > Part of **[clin-rs](https://github.com/reekta92/clin-rs)**
 
-# Plans
-- [X] Custom themes
-- [X] Hot reloading the config
-- [ ] More modes for different usage purposes:
-> - [X] Obsidian mode: creates a graph of `.md ` files according to [[wikilinks]]
-> - [ ] Obsidian single mode: similar to Obsidian mode but instead of creating graph of different files and their connections, creates graph of a single file(god node) and headlines as nodes
-> - [ ] Coding mode: creates a graph of a project by assigning the source files as god nodes and codeblocks inside them are nodes connected to it
-> - [ ] Org mode: same logic as Obsidian mode but for `.org` files
-
 # Showcase
 <table>
   <tr>
