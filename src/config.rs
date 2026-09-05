@@ -265,10 +265,16 @@ impl GrafConfig {
         if let Ok(s) = env::var("GRAF_EDITOR_COMMAND") {
             self.editor.command = Some(s);
         }
-        if let Some(v) = env::var("GRAF_PREVIEW_ENABLED").ok().and_then(|s| s.parse::<bool>().ok()) {
+        if let Some(v) = env::var("GRAF_PREVIEW_ENABLED")
+            .ok()
+            .and_then(|s| s.parse::<bool>().ok())
+        {
             self.preview_enabled = v;
         }
-        if let Some(v) = env::var("GRAF_MAX_NODE").ok().and_then(|s| s.parse::<usize>().ok()) {
+        if let Some(v) = env::var("GRAF_MAX_NODE")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             self.max_node = v;
         }
     }
@@ -286,9 +292,7 @@ fn migrate_toml(content: &str) -> String {
         return content.to_string();
     };
     if let Some(table) = value.as_table_mut() {
-        table
-            .entry("max_node".to_string())
-            .or_insert(old);
+        table.entry("max_node".to_string()).or_insert(old);
     }
     value.to_string()
 }

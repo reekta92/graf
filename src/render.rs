@@ -8,7 +8,9 @@ use ratatui::widgets::canvas::{Canvas, Line, Painter, Shape};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 
 use crate::graph::{ContextMenu, GraphState};
-use crate::settings::{EdgeColorMode, LabelMode, LegendPosition, NodeColorMode, NodeShape, Settings};
+use crate::settings::{
+    EdgeColorMode, LabelMode, LegendPosition, NodeColorMode, NodeShape, Settings,
+};
 use crate::theme::ThemeColors;
 use crate::viewport::{Viewport, node_world_radius};
 
@@ -499,8 +501,7 @@ impl RenderCache {
         self.label_texts.clear();
         for idx in graph.node_indices() {
             let node = &graph[idx];
-            let truncated =
-                truncate_ellipsis(&node.data.title, settings.visual.label_max_length);
+            let truncated = truncate_ellipsis(&node.data.title, settings.visual.label_max_length);
             self.label_texts.insert(idx, truncated);
         }
         self.cached_label_max_length = settings.visual.label_max_length;
@@ -569,13 +570,9 @@ impl RenderCache {
         self.nodes.clear();
         self.visible_nodes.clear();
 
-        for idx in crate::graph::nodes_in_rect(
-            graph,
-            x_bounds[0],
-            y_bounds[0],
-            x_bounds[1],
-            y_bounds[1],
-        ) {
+        for idx in
+            crate::graph::nodes_in_rect(graph, x_bounds[0], y_bounds[0], x_bounds[1], y_bounds[1])
+        {
             self.visible_nodes.insert(idx);
         }
 
@@ -742,9 +739,7 @@ impl RenderCache {
             self.labels.push(LabelData {
                 node_idx: idx,
                 x: node.location.x as f64,
-                y: node.location.y as f64
-                    + radius
-                    + settings.visual.label_offset.max(min_offset_y),
+                y: node.location.y as f64 + radius + settings.visual.label_offset.max(min_offset_y),
             });
         }
     }
@@ -1396,8 +1391,7 @@ pub fn draw_looking_glass(
             .iter()
             .take(tag_count)
             .map(|(tag, color)| {
-                let label =
-                    truncate_ellipsis(tag, inner.width.saturating_sub(2) as usize);
+                let label = truncate_ellipsis(tag, inner.width.saturating_sub(2) as usize);
                 ratatui::text::Line::from(ratatui::text::Span::styled(
                     format!("#{label}"),
                     Style::default().fg(*color),
@@ -1524,12 +1518,7 @@ fn draw_canvas_grid(
     muted: Color,
     zoom: f64,
 ) {
-    if !visible
-        || area.is_empty()
-        || !projection.is_valid()
-        || !zoom.is_finite()
-        || zoom <= 0.0
-    {
+    if !visible || area.is_empty() || !projection.is_valid() || !zoom.is_finite() || zoom <= 0.0 {
         return;
     }
 

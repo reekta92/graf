@@ -153,11 +153,7 @@ pub fn apply_action(
 
 fn auto_fit_padding(settings: &Settings) -> f64 {
     let p = settings.interaction.auto_fit_padding;
-    if p.is_finite() && p > 0.0 {
-        p
-    } else {
-        1.4
-    }
+    if p.is_finite() && p > 0.0 { p } else { 1.4 }
 }
 
 /// Key bindings for graph actions. `Default` reproduces the standalone
@@ -223,7 +219,6 @@ pub fn handle_graph_keys(
     settings: &Settings,
     keymap: &GraphKeymap,
 ) -> Option<GraphAction> {
-
     // Context menu open: keys drive the menu exclusively.
     {
         let mut guard = state.write();
@@ -443,9 +438,9 @@ pub fn handle_graph_mouse(
                         .hit_test(wx, wy, &guard, settings, canvas, max_lc)
                 };
 
-                let is_double_click = mouse_state
-                    .last_click_time
-                    .is_some_and(|t| t.elapsed().as_millis() < settings.interaction.double_click_ms as u128);
+                let is_double_click = mouse_state.last_click_time.is_some_and(|t| {
+                    t.elapsed().as_millis() < settings.interaction.double_click_ms as u128
+                });
 
                 if let Some(node_idx) = hit {
                     let mut guard = state.write();
@@ -523,9 +518,8 @@ pub fn handle_graph_mouse(
                     } else {
                         guard.alpha = 0.0;
                         guard.is_settled = true;
-                        let bounds = crate::render::compute_graph_bounds(
-                            guard.simulation.get_graph(),
-                        );
+                        let bounds =
+                            crate::render::compute_graph_bounds(guard.simulation.get_graph());
                         guard.graph_bounds = bounds;
                         guard.render_cache.lock().minimap_dirty = true;
                     }
@@ -760,10 +754,12 @@ mod tests {
         let settings = Settings::default();
         let mut keymap = GraphKeymap::default();
         // Unbind `q` and `+`; bind `z` to Quit instead.
-        keymap.bindings.retain(|(k, _)| {
-            k.code != KeyCode::Char('q') && k.code != KeyCode::Char('+')
-        });
-        keymap.bindings.push(binding(KeyCode::Char('z'), false, Quit));
+        keymap
+            .bindings
+            .retain(|(k, _)| k.code != KeyCode::Char('q') && k.code != KeyCode::Char('+'));
+        keymap
+            .bindings
+            .push(binding(KeyCode::Char('z'), false, Quit));
 
         // Injected binding dispatches (Quit is host-level: returned as-is).
         let z = handle_graph_keys(

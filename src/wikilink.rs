@@ -109,7 +109,10 @@ mod tests {
         // ponytail: prefix search is case-sensitive (clin parity); a
         // case-insensitive target is NOT removed.
         assert!(out.contains("[[target not]]"), "case-variant kept");
-        assert!(!out.trim_end().ends_with("## Links"), "empty section trimmed");
+        assert!(
+            !out.trim_end().ends_with("## Links"),
+            "empty section trimmed"
+        );
     }
 
     #[test]

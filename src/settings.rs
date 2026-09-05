@@ -13,7 +13,7 @@ pub enum Background {
 
 impl FromStr for Background {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "transparent" => Ok(Background::Transparent),
@@ -50,7 +50,7 @@ pub enum Theme {
 
 impl FromStr for Theme {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "default" => Ok(Theme::Default),
@@ -489,9 +489,15 @@ pub struct EditorConfig {
 }
 
 // Default functions for Graf-specific configs
-fn default_true() -> bool { true }
-fn default_border_title() -> String { "graf".to_string() }
-fn default_max_legend_items() -> usize { 10 }
+fn default_true() -> bool {
+    true
+}
+fn default_border_title() -> String {
+    "graf".to_string()
+}
+fn default_max_legend_items() -> usize {
+    10
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -559,9 +565,9 @@ impl serde::Serialize for ColorOverrides {
         S: Serializer,
     {
         use serde::ser::SerializeStruct;
-        
+
         let mut s = serializer.serialize_struct("ColorOverrides", 10)?;
-        
+
         fn fmt_color(c: &Color) -> String {
             if let Color::Rgb(r, g, b) = c {
                 format!("#{:02x}{:02x}{:02x}", r, g, b)
@@ -569,7 +575,7 @@ impl serde::Serialize for ColorOverrides {
                 format!("{:?}", c)
             }
         }
-        
+
         if let Some(ref v) = self.node_color {
             s.serialize_field("node_color", &fmt_color(v))?;
         }
@@ -600,7 +606,7 @@ impl serde::Serialize for ColorOverrides {
         if let Some(ref v) = self.background_color {
             s.serialize_field("background_color", &fmt_color(v))?;
         }
-        
+
         s.end()
     }
 }
@@ -633,7 +639,7 @@ impl<'de> serde::Deserialize<'de> for ColorOverrides {
             #[serde(default, deserialize_with = "deserialize_optional_color")]
             background_color: Option<Color>,
         }
-        
+
         let raw = ColorOverridesRaw::deserialize(deserializer)?;
         Ok(ColorOverrides {
             node_color: raw.node_color,

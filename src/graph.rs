@@ -319,7 +319,10 @@ pub struct GraphState {
 }
 
 impl GraphState {
-    pub fn new(simulation: Simulation<GraphNodeData, ()>, viewport: crate::viewport::Viewport) -> Self {
+    pub fn new(
+        simulation: Simulation<GraphNodeData, ()>,
+        viewport: crate::viewport::Viewport,
+    ) -> Self {
         Self {
             simulation,
             viewport,
@@ -447,10 +450,8 @@ pub fn build_graph(
     }
 
     // 2. Map valid titles for edge validation
-    let valid_titles: HashSet<String> = valid_nodes
-        .iter()
-        .map(|n| n.title.to_lowercase())
-        .collect();
+    let valid_titles: HashSet<String> =
+        valid_nodes.iter().map(|n| n.title.to_lowercase()).collect();
 
     // 3. Find titles that participate in at least one valid edge
     let mut has_valid_edge = HashSet::new();
@@ -552,8 +553,17 @@ pub fn create_simulation(
     graph: ForceGraph<GraphNodeData, ()>,
     settings: &Settings,
 ) -> Simulation<GraphNodeData, ()> {
-    let force = fdg_sim::force::handy(settings.physics.ideal_distance as f32, settings.physics.damping, true, true);
-    let params = SimulationParameters::new(settings.physics.max_iterations as f32, fdg_sim::Dimensions::Two, force);
+    let force = fdg_sim::force::handy(
+        settings.physics.ideal_distance as f32,
+        settings.physics.damping,
+        true,
+        true,
+    );
+    let params = SimulationParameters::new(
+        settings.physics.max_iterations as f32,
+        fdg_sim::Dimensions::Two,
+        force,
+    );
     Simulation::from_graph(graph, params)
 }
 
@@ -567,11 +577,7 @@ fn collect_static_components(graph: &ForceGraph<GraphNodeData, ()>) -> Vec<Stati
     start_nodes.sort_by(|&a, &b| {
         let node_a = &graph[a];
         let node_b = &graph[b];
-        node_a
-            .data
-            .id
-            .cmp(&node_b.data.id)
-            .then_with(|| a.cmp(&b))
+        node_a.data.id.cmp(&node_b.data.id).then_with(|| a.cmp(&b))
     });
 
     for &start_node in &start_nodes {
@@ -592,11 +598,7 @@ fn collect_static_components(graph: &ForceGraph<GraphNodeData, ()>) -> Vec<Stati
             neighbors.sort_by(|&a, &b| {
                 let node_a = &graph[a];
                 let node_b = &graph[b];
-                node_a
-                    .data
-                    .id
-                    .cmp(&node_b.data.id)
-                    .then_with(|| a.cmp(&b))
+                node_a.data.id.cmp(&node_b.data.id).then_with(|| a.cmp(&b))
             });
 
             for nbr in neighbors {
@@ -611,11 +613,7 @@ fn collect_static_components(graph: &ForceGraph<GraphNodeData, ()>) -> Vec<Stati
         component_nodes.sort_by(|&a, &b| {
             let node_a = &graph[a];
             let node_b = &graph[b];
-            node_a
-                .data
-                .id
-                .cmp(&node_b.data.id)
-                .then_with(|| a.cmp(&b))
+            node_a.data.id.cmp(&node_b.data.id).then_with(|| a.cmp(&b))
         });
 
         if !component_nodes.is_empty() {
@@ -887,15 +885,17 @@ pub fn search_nodes(
             let node = &graph[idx];
             let title = &node.data.title;
             let tags = &node.data.tags;
-            
-            if title.to_lowercase().contains(&lower) || tags.iter().any(|t| t.to_lowercase().contains(&lower)) {
+
+            if title.to_lowercase().contains(&lower)
+                || tags.iter().any(|t| t.to_lowercase().contains(&lower))
+            {
                 Some((idx, title.clone()))
             } else {
                 None
             }
         })
         .collect();
-    
+
     matches.truncate(max_results);
     matches
 }
@@ -1015,7 +1015,7 @@ mod tests {
         assert_eq!(specs.len(), 2);
         assert_eq!(specs[0].label, "Show Group");
         assert_eq!(specs[0].shortcut, Some('g'));
-        
+
         let specs = menu_specs(false, true);
         assert_eq!(specs.len(), 4);
         assert_eq!(specs[0].label, "Create Connection");
@@ -1023,8 +1023,14 @@ mod tests {
 
     #[test]
     fn test_menu_item_from_label() {
-        assert!(matches!(menu_item_from_label("Create Connection"), Some(MenuItem::CreateConnection)));
-        assert!(matches!(menu_item_from_label("Delete Connection"), Some(MenuItem::DeleteConnection)));
+        assert!(matches!(
+            menu_item_from_label("Create Connection"),
+            Some(MenuItem::CreateConnection)
+        ));
+        assert!(matches!(
+            menu_item_from_label("Delete Connection"),
+            Some(MenuItem::DeleteConnection)
+        ));
         assert!(menu_item_from_label("Invalid").is_none());
     }
 

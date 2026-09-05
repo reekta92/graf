@@ -1,5 +1,5 @@
-use ratatui::style::Color;
 use crate::settings::{Background, Theme};
+use ratatui::style::Color;
 
 // ── Theme Colors ─────────────────────────────────────────────────────────────
 

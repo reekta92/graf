@@ -49,7 +49,9 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
             let paragraph = ratatui::widgets::Paragraph::new(status).style(
                 ratatui::style::Style::default()
                     .fg(colors.status_bar_color)
-                    .bg(colors.background_color.unwrap_or(ratatui::style::Color::Reset)),
+                    .bg(colors
+                        .background_color
+                        .unwrap_or(ratatui::style::Color::Reset)),
             );
             frame.render_widget(
                 paragraph,
@@ -60,9 +62,7 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
         // Connection/focus mode banner, centered on the top row.
         if let Some(mode) = guard.mode_banner {
             let text: &'static str = match mode {
-                crate::graph::ModeBanner::CreateConnection => {
-                    " CONNECTION MODE — select target "
-                }
+                crate::graph::ModeBanner::CreateConnection => " CONNECTION MODE — select target ",
                 crate::graph::ModeBanner::DeleteConnection => {
                     " DELETE CONNECTION MODE — select target "
                 }

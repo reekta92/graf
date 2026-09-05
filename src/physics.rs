@@ -225,7 +225,7 @@ pub fn start_physics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{build_graph, create_simulation, GraphNodeData, NodeSpec};
+    use crate::graph::{GraphNodeData, NodeSpec, build_graph, create_simulation};
     use crate::settings::Settings;
     use fdg_sim::ForceGraphHelper;
 
@@ -240,7 +240,7 @@ mod tests {
                 links: links.iter().map(|s| s.to_string()).collect(),
             })
             .collect();
-        
+
         let settings = Settings::default();
         let graph = build_graph(&node_specs, &settings).unwrap();
         let simulation = create_simulation(graph, &settings);
@@ -433,7 +433,7 @@ mod tests {
         let handle_1 = start_physics(state_1.clone(), &settings);
         assert!(handle_1.is_some());
         assert!(state_1.read().physics_worker_active);
-        
+
         // Clean up the thread
         let _ = handle_1.unwrap().send(());
     }

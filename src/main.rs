@@ -6,21 +6,21 @@ mod config;
 #[allow(dead_code)]
 mod graph;
 #[allow(dead_code)]
+mod input;
+#[allow(dead_code)]
 mod linker;
-mod ui;
-mod util;
+#[allow(dead_code)]
+mod physics;
+#[allow(dead_code)]
+mod render;
 #[allow(dead_code)]
 mod settings;
 #[allow(dead_code)]
 mod theme;
-#[allow(dead_code)]
-mod physics;
+mod ui;
+mod util;
 #[allow(dead_code)]
 mod viewport;
-#[allow(dead_code)]
-mod render;
-#[allow(dead_code)]
-mod input;
 #[allow(dead_code)]
 mod wikilink;
 
@@ -190,7 +190,8 @@ fn handle_event(
             }
 
             if let Some(graph_state) = &app_state.graph_state
-                && let Some(action) = crate::input::handle_graph_keys(graph_state, key, config, &app_state.keymap)
+                && let Some(action) =
+                    crate::input::handle_graph_keys(graph_state, key, config, &app_state.keymap)
             {
                 return Ok(apply_graph_action(action, app_state, config));
             }
@@ -561,11 +562,7 @@ fn main() -> Result<()> {
     } else {
         std::env::current_dir().context("failed to get current directory")?
     };
-    let files = linker::scan_markdown_files(
-        &cwd,
-        &config.filter.exclude_patterns,
-        config.max_node,
-    );
+    let files = linker::scan_markdown_files(&cwd, &config.filter.exclude_patterns, config.max_node);
 
     if files.is_empty() {
         eprintln!("No markdown files found in {}", cwd.display());
