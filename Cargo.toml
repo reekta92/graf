@@ -40,7 +40,7 @@ petgraph = "0.8"
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 regex = "1"
-directories = "5"
+directories = "6"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 parking_lot = "0.12"
