@@ -5,7 +5,7 @@ A terminal-based force-directed graph visualizer for markdown wikilinks. Run `gr
 # DISCLAIMER
 `graf` is originally meant to be a feature for my main project `clin-rs`. When this project is fully developed it will be merged with the `clin-rs` project as a "graph view" feature. Currently **all the big features are implemented** and only the testing, bugfixing phase remains. So please create a issue for any problem you encounter using `graf`!
 
-> Part of **[clin-rs](https://github.com/reekta92/clin-rs)**
+**This project is a library for the [clin-rs](https://github.com/reekta92/clin-rs) project though it can also be used as a standalone**
 
 # Showcase
 <table>
