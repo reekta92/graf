@@ -21,6 +21,7 @@ pub struct ThemeColors {
     pub highlight_fg: Option<Color>,
     pub highlight_bg: Option<Color>,
     pub menu_bg_color: Option<Color>,
+    pub menu_shortcut_color: Option<Color>,
 }
 
 struct ThemePalette {
@@ -60,6 +61,7 @@ impl ThemePalette {
             highlight_fg: None,
             highlight_bg: None,
             menu_bg_color: None,
+            menu_shortcut_color: None,
         }
     }
 }
@@ -283,6 +285,7 @@ fn default_theme_colors(background: Background) -> ThemeColors {
         highlight_fg: None,
         highlight_bg: None,
         menu_bg_color: None,
+        menu_shortcut_color: None,
     }
 }
 

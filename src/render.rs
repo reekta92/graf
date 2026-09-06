@@ -1481,7 +1481,7 @@ fn render_context_menu(
             if let Some(c) = spec.shortcut {
                 spans.push(ratatui::text::Span::styled(
                     format!("{c} "),
-                    base.fg(theme.grid_color),
+                    base.fg(theme.menu_shortcut_color.unwrap_or(theme.grid_color)),
                 ));
             }
             ListItem::new(ratatui::text::Line::from(spans))
