@@ -170,9 +170,10 @@ fn binding(code: KeyCode, ctrl: bool, action: GraphAction) -> (KeyEvent, GraphAc
         crossterm::event::KeyModifiers::NONE
     };
     if let KeyCode::Char(c) = code
-        && c.is_uppercase() {
-            modifiers |= crossterm::event::KeyModifiers::SHIFT;
-        }
+        && c.is_uppercase()
+    {
+        modifiers |= crossterm::event::KeyModifiers::SHIFT;
+    }
     (KeyEvent::new(code, modifiers), action)
 }
 
