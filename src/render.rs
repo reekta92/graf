@@ -1432,13 +1432,16 @@ fn render_context_menu(
     theme: &ThemeColors,
 ) {
     let rect = menu.rect(area);
-    
-    // Prepare the list widget style. Use the minimap bg (which is opaque) 
+
+    // Prepare the list widget style. Use the minimap bg (which is opaque)
     // or fallback to background_color.
-    let bg_color = theme.minimap_bg_color.or(theme.background_color).unwrap_or(ratatui::style::Color::Reset);
-    
+    let bg_color = theme
+        .minimap_bg_color
+        .or(theme.background_color)
+        .unwrap_or(ratatui::style::Color::Reset);
+
     let list_style = ratatui::style::Style::default().bg(bg_color);
-    
+
     frame.render_widget(Clear, rect);
     let items: Vec<ListItem> = menu
         .items
