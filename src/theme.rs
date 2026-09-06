@@ -18,6 +18,9 @@ pub struct ThemeColors {
     pub minimap_border_color: Color,
     pub minimap_viewport_color: Color,
     pub minimap_bg_color: Option<Color>,
+    pub highlight_fg: Option<Color>,
+    pub highlight_bg: Option<Color>,
+    pub menu_bg_color: Option<Color>,
 }
 
 struct ThemePalette {
@@ -54,6 +57,9 @@ impl ThemePalette {
             minimap_border_color: Self::rgb(self.chrome),
             minimap_viewport_color: Self::rgb(self.fg),
             minimap_bg_color: Some(Self::rgb(self.bg)),
+            highlight_fg: None,
+            highlight_bg: None,
+            menu_bg_color: None,
         }
     }
 }
@@ -274,6 +280,9 @@ fn default_theme_colors(background: Background) -> ThemeColors {
         minimap_border_color: dark_gray,
         minimap_viewport_color: white,
         minimap_bg_color: Some(Color::Black),
+        highlight_fg: None,
+        highlight_bg: None,
+        menu_bg_color: None,
     }
 }
 

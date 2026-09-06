@@ -972,7 +972,7 @@ pub fn draw_graph_view(
     }
 
     if let Some(menu) = &state.context_menu {
-        render_context_menu(frame, canvas_area, menu, theme);
+        render_context_menu(frame, canvas_area, menu, theme, state.mouse_pos);
     }
 }
 
@@ -1430,18 +1430,12 @@ fn render_context_menu(
     area: Rect,
     menu: &ContextMenu,
     theme: &ThemeColors,
+    mouse_pos: Option<(u16, u16)>,
 ) {
     let rect = menu.rect(area);
-
-    // Prepare the list widget style. Use the minimap bg (which is opaque)
-    // or fallback to background_color.
-    let bg_color = theme
-        .minimap_bg_color
-        .or(theme.background_color)
-        .unwrap_or(ratatui::style::Color::Reset);
-
-    let list_style = ratatui::style::Style::default().bg(bg_color);
-
+    
+    let bg_color = theme.menu_bg_color.or(theme.background_color).unwrap_or(ratatui::style::Color::Reset);
+    
     frame.render_widget(Clear, rect);
     let items: Vec<ListItem> = menu
         .items
@@ -1450,10 +1444,12 @@ fn render_context_menu(
         .map(|(i, spec)| {
             let is_selected = i == menu.selected;
             let base = if is_selected {
-                ratatui::style::Style::default()
-                    .fg(bg_color)
-                    .bg(theme.label_color)
-                    .add_modifier(Modifier::BOLD)
+                let mut st = ratatui::style::Style::default().add_modifier(Modifier::BOLD);
+                if let Some(c) = theme.highlight_fg { st = st.fg(c); }
+                else { st = st.fg(bg_color); }
+                if let Some(c) = theme.highlight_bg { st = st.bg(c); }
+                else { st = st.bg(theme.label_color); }
+                st
             } else {
                 ratatui::style::Style::default().fg(theme.label_color)
             };
@@ -1482,7 +1478,38 @@ fn render_context_menu(
             ListItem::new(ratatui::text::Line::from(spans))
         })
         .collect();
-    frame.render_widget(List::new(items).style(list_style), rect);
+
+    let list = List::new(items).block(
+        Block::default()
+            .borders(ratatui::widgets::Borders::NONE)
+            .style(ratatui::style::Style::default().bg(bg_color)),
+    );
+    frame.render_widget(list, rect);
+
+    // Hover highlight on the row under the mouse (excluding selected row).
+    if let Some((col, row)) = mouse_pos
+        && !rect.is_empty()
+        && col >= rect.x
+        && col < rect.x + rect.width
+        && row >= rect.y
+        && row < rect.y + rect.height
+    {
+        let idx = (row - rect.y) as usize;
+        if idx < menu.items.len() && idx != menu.selected {
+            let hover_rect = Rect::new(rect.x, row, rect.width, 1);
+            let buf = frame.buffer_mut();
+            for c in hover_rect.left()..hover_rect.right() {
+                if let Some(cell) = buf.cell_mut((c, row)) {
+                    if let Some(hbg) = theme.highlight_bg {
+                        cell.set_bg(hbg);
+                    }
+                    if let Some(hfg) = theme.highlight_fg {
+                        cell.set_fg(hfg);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ── Adaptive grid overlay ─────────────────────────────────────────────────────
