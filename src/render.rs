@@ -1433,9 +1433,12 @@ fn render_context_menu(
     mouse_pos: Option<(u16, u16)>,
 ) {
     let rect = menu.rect(area);
-    
-    let bg_color = theme.menu_bg_color.or(theme.background_color).unwrap_or(ratatui::style::Color::Reset);
-    
+
+    let bg_color = theme
+        .menu_bg_color
+        .or(theme.background_color)
+        .unwrap_or(ratatui::style::Color::Reset);
+
     frame.render_widget(Clear, rect);
     let items: Vec<ListItem> = menu
         .items
@@ -1445,10 +1448,16 @@ fn render_context_menu(
             let is_selected = i == menu.selected;
             let base = if is_selected {
                 let mut st = ratatui::style::Style::default().add_modifier(Modifier::BOLD);
-                if let Some(c) = theme.highlight_fg { st = st.fg(c); }
-                else { st = st.fg(bg_color); }
-                if let Some(c) = theme.highlight_bg { st = st.bg(c); }
-                else { st = st.bg(theme.label_color); }
+                if let Some(c) = theme.highlight_fg {
+                    st = st.fg(c);
+                } else {
+                    st = st.fg(bg_color);
+                }
+                if let Some(c) = theme.highlight_bg {
+                    st = st.bg(c);
+                } else {
+                    st = st.bg(theme.label_color);
+                }
                 st
             } else {
                 ratatui::style::Style::default().fg(theme.label_color)
