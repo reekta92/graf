@@ -123,6 +123,9 @@ EDITOR=nvim graf
 | `r` | Refresh file scan |
 | `Shift+M` | Toggle minimap |
 | `Shift+L` | Toggle legend |
+| `Ctrl+R` | Reload config |
+| `Shift+M` | Toggle minimap |
+| `Shift+L` | Toggle legend |
 | `Shift+G` | Toggle grid |
 | `Shift+S` | Toggle status bar |
 | `?` | Toggle help overlay |
@@ -186,6 +189,9 @@ canvas_marker = "braille"
 node_shape = "circle"
 label_offset = 4.0
 grid_divisions = 10
+show_looking_glass = true
+looking_glass_width = 24
+looking_glass_height = 12
 
 [visual.colors]
 node_color = "#ff6600"
@@ -204,7 +210,7 @@ cooling = true
 prevent_overlapping = true
 timestep = 0.016
 thread_sleep_ms = 16
-
+tick_rate = "auto"
 [interaction]
 double_click_ms = 300
 zoom_factor = 1.15
@@ -223,7 +229,7 @@ exclude_tags = ["draft", "private"]
 exclude_patterns = ["*.bak", "archive/*"]
 min_links = 0
 max_nodes = 500
-
+show_orphan = false
 [legend]
 position = "top_right"
 max_items = 10
@@ -263,6 +269,9 @@ command = ""
 | `node_shape` | string | `"circle"` | Node shape: `"circle"`, `"square"`, `"diamond"` |
 | `label_offset` | float | `4.0` | Distance between node edge and label |
 | `grid_divisions` | int | `10` | Number of grid lines per axis (2–50) |
+| `show_looking_glass` | bool | `true` | Show looking glass |
+| `looking_glass_width` | int | `24` | Looking glass width in columns |
+| `looking_glass_height` | int | `12` | Looking glass height in rows |
 
 ### `[visual.colors]`
 
@@ -295,6 +304,7 @@ Controls the force-directed layout simulation.
 | `prevent_overlapping` | bool | `true` | Prevent nodes from overlapping |
 | `timestep` | float | `0.016` | Simulation timestep (lower = smoother but slower) |
 | `thread_sleep_ms` | int | `16` | Milliseconds between simulation steps (~60fps) |
+| `tick_rate` | string | `"auto"` | Tick rate mode: `"auto"` or `"fixed"` |
 
 ### `[interaction]`
 
@@ -312,7 +322,7 @@ Controls the force-directed layout simulation.
 |-----|------|---------|-------------|
 | `show_status_bar` | bool | `true` | Show the status bar at the bottom |
 | `status_format` | string | `"Files: {files} \| Links: {links} \| Selected: {selected}"` | Status bar text template. Variables: `{files}`, `{links}`, `{selected}`, `{date}`, `{time}`, `{size}`, `{ratio}` |
-| `border_style` | string | `"rounded"` | Border style: `"plain"`, `"rounded"`, `"double"`, `"none"` |
+| `border_style` | string | `"rounded"` | Border style: `"plain"`, `"rounded"`, `"double"`, `"thick"`, `"dashed"`, `"dot"` |
 | `border_title` | string | `"graf"` | Window title. Supports `{cwd}` variable (current directory name) |
 
 ### `[filter]`
@@ -323,6 +333,7 @@ Controls the force-directed layout simulation.
 | `exclude_patterns` | array | `[]` | Glob patterns for files to exclude |
 | `min_links` | int | `0` | Only show nodes with at least this many connections |
 | `max_nodes` | int | `500` | Maximum nodes to display (`0` = unlimited) |
+| `show_orphan` | bool | `false` | Whether to show orphan nodes |
 
 ### `[legend]`
 
@@ -355,25 +366,42 @@ Controls the force-directed layout simulation.
 graf [OPTIONS]
 
 Options:
-  -d, --dir <DIR>              Directory to scan [default: current]
-  -c, --config <CONFIG>        Path to config file
-      --theme <THEME>          Theme preset
-      --max-nodes <MAX_NODES>  Maximum nodes to display
-      --exclude <EXCLUDE>      Exclude glob patterns (repeatable)
-      --exclude-tags <TAGS>    Exclude tags (comma-separated)
-      --node-color-mode <MODE> Node color mode
-      --edge-color-mode <MODE> Edge color mode
-      --label-mode <MODE>      Label display mode
-      --labels                 Show all labels (shorthand for --label-mode all)
-      --no-status              Hide status bar
-      --grid                   Show grid
-      --no-minimap             Hide minimap
-      --no-legend              Hide legend
-      --background <BG>        Background style
-      --border-style <STYLE>   Border style for overlays
-      --editor <EDITOR>        Editor command to open files
-  -h, --help                   Print help
-  -V, --version                Print version
+  -d, --dir <DIR>
+          Directory to scan for markdown files (default: current directory)
+  -c, --config <CONFIG>
+          Path to config file (default: XDG config dir)
+      --theme <THEME>
+          Theme preset to use
+      --max-nodes <MAX_NODES>
+          Maximum number of nodes to display
+      --exclude <EXCLUDE>
+          Exclude files matching glob pattern (repeatable)
+      --exclude-tags <EXCLUDE_TAGS>
+          Exclude tags (comma-separated)
+      --node-color-mode <NODE_COLOR_MODE>
+          Node color mode
+      --edge-color-mode <EDGE_COLOR_MODE>
+          Edge color mode
+      --label-mode <LABEL_MODE>
+          Label display mode
+      --labels
+          Show all labels
+      --no-status
+          Hide status bar
+      --grid
+          Show grid
+      --no-minimap
+          Hide minimap
+      --no-legend
+          Hide legend
+      --background <BACKGROUND>
+          Background style
+      --border-style <BORDER_STYLE>
+          Border style for overlays
+      --editor <EDITOR>
+          Editor command to open files
+  -h, --help
+          Print help
 ```
 
 > CLI arguments override config file values, which override defaults.
@@ -489,30 +517,28 @@ A force-directed layout runs on a background thread at ~60fps using `fdg-sim`. R
 
 - - -
 
-## Project structure
-
 ```
 graf/
 ├── Cargo.toml
 ├── README.md
 └── src/
     ├── main.rs          # Entry point, terminal setup, event loop
+    ├── lib.rs           # Library exports
     ├── cli.rs           # CLI argument definitions (clap)
     ├── app.rs           # App state management, graph initialization
-    ├── config.rs        # Config loading, validation, color overrides
-    ├── config/
-    │   └── themes.rs    # 11 theme palettes and builder
+    ├── config.rs        # Config loading, validation
+    ├── settings.rs      # Setting structs and defaults
+    ├── theme.rs         # Theme palettes and builder
     ├── linker.rs        # File scanning, wikilink extraction, frontmatter parsing
+    ├── wikilink.rs      # Wikilink regex extraction logic
     ├── ui.rs            # Help overlay, search popup, config error rendering
-    ├── util.rs          # Shared utilities (text truncation)
-    └── graph/
-        ├── mod.rs       # GraphState, ForceGraph construction, search
-        ├── render.rs    # Canvas drawing (nodes, edges, labels, legend, grid, minimap)
-        ├── input.rs     # Keyboard and mouse event handling
-        ├── viewport.rs  # Pan, zoom, screen-to-world conversion, hit-testing
-        └── physics.rs   # Background thread for force simulation
+    ├── util.rs          # Shared utilities
+    ├── graph.rs         # GraphState, ForceGraph construction
+    ├── render.rs        # Canvas drawing (nodes, edges, labels, legend, grid, minimap)
+    ├── input.rs         # Keyboard and mouse event handling
+    ├── viewport.rs      # Pan, zoom, screen-to-world conversion, hit-testing
+    └── physics.rs       # Background thread for force simulation
 ```
-
 - - -
 
 ## Performance
