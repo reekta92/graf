@@ -7,6 +7,10 @@ A terminal-based force-directed graph visualizer for markdown wikilinks. Run `gr
 
 **This project is a library for the [clin-rs](https://github.com/reekta92/clin-rs) project though it can also be used as a standalone**
 
+## Library API
+
+For using `graf` as a library in your own ratatui application, see **[API.md](API.md)** — covers dependency setup, graph construction, physics, rendering, input handling, and configuration with real-world integration examples.
+
 # Showcase
 <table>
   <tr>
