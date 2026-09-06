@@ -1432,6 +1432,13 @@ fn render_context_menu(
     theme: &ThemeColors,
 ) {
     let rect = menu.rect(area);
+    
+    // Prepare the list widget style. Use the minimap bg (which is opaque) 
+    // or fallback to background_color.
+    let bg_color = theme.minimap_bg_color.or(theme.background_color).unwrap_or(ratatui::style::Color::Reset);
+    
+    let list_style = ratatui::style::Style::default().bg(bg_color);
+    
     frame.render_widget(Clear, rect);
     let items: Vec<ListItem> = menu
         .items
@@ -1440,12 +1447,12 @@ fn render_context_menu(
         .map(|(i, spec)| {
             let is_selected = i == menu.selected;
             let base = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Gray)
+                ratatui::style::Style::default()
+                    .fg(bg_color)
+                    .bg(theme.label_color)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.label_color)
+                ratatui::style::Style::default().fg(theme.label_color)
             };
             let mut spans: Vec<ratatui::text::Span> = Vec::new();
             spans.push(ratatui::text::Span::styled("  ", base));
@@ -1472,7 +1479,7 @@ fn render_context_menu(
             ListItem::new(ratatui::text::Line::from(spans))
         })
         .collect();
-    frame.render_widget(List::new(items), rect);
+    frame.render_widget(List::new(items).style(list_style), rect);
 }
 
 // ── Adaptive grid overlay ─────────────────────────────────────────────────────
