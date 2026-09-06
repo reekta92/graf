@@ -164,17 +164,17 @@ pub struct GraphKeymap {
 }
 
 fn binding(code: KeyCode, ctrl: bool, action: GraphAction) -> (KeyEvent, GraphAction) {
-    (
-        KeyEvent::new(
-            code,
-            if ctrl {
-                crossterm::event::KeyModifiers::CONTROL
-            } else {
-                crossterm::event::KeyModifiers::NONE
-            },
-        ),
-        action,
-    )
+    let mut modifiers = if ctrl {
+        crossterm::event::KeyModifiers::CONTROL
+    } else {
+        crossterm::event::KeyModifiers::NONE
+    };
+    if let KeyCode::Char(c) = code {
+        if c.is_uppercase() {
+            modifiers |= crossterm::event::KeyModifiers::SHIFT;
+        }
+    }
+    (KeyEvent::new(code, modifiers), action)
 }
 
 impl Default for GraphKeymap {
@@ -202,10 +202,10 @@ impl Default for GraphKeymap {
                 binding(KeyCode::Char('r'), false, Refresh),
                 binding(KeyCode::Char('f'), false, ToggleSearch),
                 binding(KeyCode::Char('?'), false, ToggleHelp),
-                binding(KeyCode::Char('M'), false, ToggleMinimap),
-                binding(KeyCode::Char('L'), false, ToggleLegend),
-                binding(KeyCode::Char('G'), false, ToggleGrid),
-                binding(KeyCode::Char('S'), false, ToggleStatus),
+                binding(KeyCode::Char('m'), false, ToggleMinimap),
+                binding(KeyCode::Char('l'), true, ToggleLegend),
+                binding(KeyCode::Char('g'), true, ToggleGrid),
+                binding(KeyCode::Char('s'), true, ToggleStatus),
             ],
         }
     }
