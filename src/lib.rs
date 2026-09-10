@@ -18,8 +18,8 @@ pub use render::{
 };
 
 pub use settings::{
-    Background, CanvasMarker, EdgeColorMode, LabelMode, LegendPosition, NodeColorMode, NodeShape,
-    NodeSizeMode, PhysicsTickRate, Settings,
+    Background, CanvasMarker, EdgeColorMode, LabelMode, LegendPosition, NodeColorMode, NodeFill,
+    NodeScale, NodeShape, NodeSizeMode, PhysicsTickRate, Settings,
 };
 pub mod wikilink;
 pub use graph::{

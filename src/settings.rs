@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error as DeError};
 use std::str::FromStr;
 
 // ── Enums ───────────────────────────────────────────────────────────────────
@@ -122,6 +122,87 @@ pub enum NodeSizeMode {
     #[default]
     Fixed,
     LinkCount,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NodeScale {
+    #[default]
+    Automatic,
+    /// Fixed size 1-10; 1 = classic outlined nodes, 10 = roomy filled nodes.
+    Fixed(u8),
+}
+
+impl Serialize for NodeScale {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            NodeScale::Automatic => serializer.serialize_str("automatic"),
+            NodeScale::Fixed(n) => serializer.serialize_u8(*n),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for NodeScale {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct NodeScaleVisitor;
+
+        impl serde::de::Visitor<'_> for NodeScaleVisitor {
+            type Value = NodeScale;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str(r#""automatic" or an integer 1-10"#)
+            }
+
+            fn visit_str<E: DeError>(self, v: &str) -> Result<NodeScale, E> {
+                if v.eq_ignore_ascii_case("automatic") {
+                    Ok(NodeScale::Automatic)
+                } else {
+                    Err(E::custom(
+                        r#"node_scale: expected "automatic" or integer 1-10"#,
+                    ))
+                }
+            }
+
+            fn visit_u64<E: DeError>(self, v: u64) -> Result<NodeScale, E> {
+                u8::try_from(v)
+                    .map(NodeScale::Fixed)
+                    .map_err(|_| E::custom(r#"node_scale: expected "automatic" or integer 1-10"#))
+            }
+
+            fn visit_i64<E: DeError>(self, v: i64) -> Result<NodeScale, E> {
+                u8::try_from(v)
+                    .map(NodeScale::Fixed)
+                    .map_err(|_| E::custom(r#"node_scale: expected "automatic" or integer 1-10"#))
+            }
+        }
+
+        deserializer.deserialize_any(NodeScaleVisitor)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeFill {
+    /// Filled per LOD and node scale (current behavior).
+    #[default]
+    Dynamic,
+    /// Always filled (except minimal-LOD 1-dot rendering).
+    Filled,
+    /// Never filled; outlined nodes.
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionFocus {
+    /// Selection changes nothing but the ring.
+    None,
+    /// The selected node and its neighbors grow.
+    #[default]
+    Grow,
+    /// Everything outside the selection's neighborhood turns gray.
+    Dim,
+    /// Both of the above.
+    GrowDim,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -271,6 +352,12 @@ pub struct VisualConfig {
     pub node_size: f64,
     #[serde(default)]
     pub node_size_mode: NodeSizeMode,
+    #[serde(default)]
+    pub node_scale: NodeScale,
+    #[serde(default)]
+    pub node_fill: NodeFill,
+    #[serde(default)]
+    pub selection_focus: SelectionFocus,
     pub edge_thickness: u16,
     pub show_legend: bool,
     #[serde(default)]
@@ -306,6 +393,9 @@ impl Default for VisualConfig {
             label_max_length: 20,
             node_size: 2.0,
             node_size_mode: NodeSizeMode::default(),
+            node_scale: NodeScale::default(),
+            node_fill: NodeFill::default(),
+            selection_focus: SelectionFocus::default(),
             edge_thickness: 1,
             show_legend: true,
             show_minimap: false,

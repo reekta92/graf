@@ -30,6 +30,9 @@ pub struct AppState {
     pub show_status_bar: bool,
     pub config_reload_msg: Option<String>,
     pub config_reload_ttl: u16,
+    /// Viewport to compare against: auto-fit again once physics settles, unless
+    /// the user already panned or zoomed away from this.
+    pub auto_fit_baseline: Option<(f64, f64, f64)>,
 }
 
 fn node_specs(files: &[FileData]) -> Vec<crate::graph::NodeSpec> {
@@ -61,6 +64,18 @@ impl AppState {
             crate::graph::GraphState::from_specs(&specs, config).expect("Failed to build graph");
         let state = Arc::new(RwLock::new(graph_state));
         let kill_tx = crate::physics::start_physics(state.clone(), config);
+        let auto_fit_baseline = {
+            let mut guard = state.write();
+            let vp = guard
+                .viewport
+                .auto_fit_from_graph(guard.simulation.get_graph(), 1.4);
+            guard.viewport = vp;
+            Some((
+                guard.viewport.center_x,
+                guard.viewport.center_y,
+                guard.viewport.zoom,
+            ))
+        };
 
         Self {
             graph_state: Some(state),
@@ -83,6 +98,23 @@ impl AppState {
             show_status_bar: config.display.show_status_bar,
             config_reload_msg: None,
             config_reload_ttl: 0,
+            auto_fit_baseline,
+        }
+    }
+
+    /// Per-frame: fit the viewport to the graph once physics settles, unless the
+    /// user already moved the camera.
+    pub fn tick(&mut self) {
+        if let (Some(baseline), Some(state)) = (self.auto_fit_baseline, &self.graph_state) {
+            let mut guard = state.write();
+            let vp = &guard.viewport;
+            if (vp.center_x, vp.center_y, vp.zoom) != baseline {
+                self.auto_fit_baseline = None;
+            } else if guard.is_settled {
+                let fitted = vp.auto_fit_from_graph(guard.simulation.get_graph(), 1.4);
+                guard.viewport = fitted;
+                self.auto_fit_baseline = None;
+            }
         }
     }
 

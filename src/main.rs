@@ -580,6 +580,7 @@ fn main() -> Result<()> {
     };
 
     while running {
+        app_state.tick();
         guard.as_mut().draw(|frame| {
             ui::draw_ui(frame, &app_state, &config);
         })?;

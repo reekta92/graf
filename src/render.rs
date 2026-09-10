@@ -9,7 +9,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 
 use crate::graph::{ContextMenu, GraphState};
 use crate::settings::{
-    EdgeColorMode, LabelMode, LegendPosition, NodeColorMode, NodeShape, Settings,
+    EdgeColorMode, LabelMode, LegendPosition, NodeColorMode, NodeFill, NodeScale, NodeShape,
+    SelectionFocus, Settings,
 };
 use crate::theme::ThemeColors;
 use crate::viewport::{Viewport, node_world_radius};
@@ -41,6 +42,19 @@ fn truncate_ellipsis(s: &str, max: usize) -> String {
     }
     format!("{}…", &s[..end])
 }
+
+const LOCAL_TAG_PALETTE: &[Color] = &[
+    Color::Red,
+    Color::Green,
+    Color::Yellow,
+    Color::Blue,
+    Color::Magenta,
+    Color::Cyan,
+    Color::Rgb(255, 165, 0),   // Orange
+    Color::Rgb(255, 105, 180), // Pink
+    Color::Rgb(50, 205, 50),   // Lime
+    Color::Rgb(0, 206, 209),   // Turquoise
+];
 
 fn tag_color(tag: &str, index: usize, _total: usize, palette: &[Color]) -> Color {
     let palette_len = palette.len();
@@ -132,10 +146,77 @@ pub struct NodeRenderData {
     pub is_hovered: bool,
     pub selection_ring_color: Color,
     pub shape: NodeShape,
+    /// Paint circles as solid discs instead of outlines.
+    pub filled: bool,
+    /// Dimmed to gray by selection focus dimming.
+    pub dimmed: bool,
+    /// Detached outline ring in the node's own color (grow focus feedback).
+    pub grow_ring: bool,
 }
-
 struct GraphNodesShape<'a> {
     nodes: &'a [NodeRenderData],
+    /// World-units step between fill samples; a fraction of one canvas cell so
+    /// filled shapes paint solid instead of speckled.
+    fill_step: f64,
+}
+
+/// Minimum node radius in text rows for a vault of `node_count` notes.
+/// `Automatic` eases from the maximum size at ~100 notes down to the classic
+/// small look by ~400 notes along a smoothstep curve, so the shrink reads as
+/// a gradual zoom instead of a linear ramp with abrupt ends.
+pub(crate) fn node_floor_rows(scale: NodeScale, node_count: usize) -> f64 {
+    const LARGE_ROWS: f64 = 0.9;
+    match scale {
+        NodeScale::Fixed(k) => LARGE_ROWS * (k.min(10).saturating_sub(1)) as f64 / 9.0,
+        NodeScale::Automatic => {
+            let t = ((400.0 - node_count as f64) / 300.0).clamp(0.0, 1.0);
+            LARGE_ROWS * t * t * (3.0 - 2.0 * t)
+        }
+    }
+}
+/// Fill-sample step in world units: a quarter of the smaller canvas cell
+/// dimension, below the braille dot pitch so discs paint solid.
+pub(crate) fn fill_step_for(cell_w: f64, cell_h: f64) -> f64 {
+    cell_w.min(cell_h) / 4.0
+}
+
+/// Paints every canvas point inside `radius` for `shape`, sampling on a
+/// `step`-spaced grid; `color_for` picks the color per sample.
+fn paint_shape(
+    painter: &mut Painter,
+    cx: f64,
+    cy: f64,
+    radius: f64,
+    shape: NodeShape,
+    step: f64,
+    color_for: impl Fn(f64, f64) -> Color,
+) {
+    let step = step.max(1e-6);
+    if step > radius {
+        if let Some((px, py)) = painter.get_point(cx, cy) {
+            painter.paint(px, py, color_for(0.0, 0.0));
+        }
+        return;
+    }
+    let inside = |dx: f64, dy: f64| match shape {
+        NodeShape::Circle => dx * dx + dy * dy <= radius * radius,
+        NodeShape::Square => dx.abs() <= radius && dy.abs() <= radius,
+        NodeShape::Diamond => dx.abs() + dy.abs() <= radius,
+    };
+    let mut dy = -radius;
+    while dy <= radius {
+        let mut dx = -radius;
+        while dx <= radius {
+            if inside(dx, dy) {
+                let color = color_for(dx, dy);
+                if let Some((px, py)) = painter.get_point(cx + dx, cy + dy) {
+                    painter.paint(px, py, color);
+                }
+            }
+            dx += step;
+        }
+        dy += step;
+    }
 }
 
 fn draw_outlined_shape(
@@ -233,109 +314,81 @@ fn draw_outlined_shape(
     }
 }
 
-fn draw_regular_polygon(
-    painter: &mut Painter,
-    cx: f64,
-    cy: f64,
-    radius: f64,
-    sides: u32,
-    rotation: f64,
-    color: Color,
-) {
-    for i in 0..sides {
-        let a1 = rotation + (i as f64) * std::f64::consts::TAU / (sides as f64);
-        let a2 = rotation + ((i + 1) as f64) * std::f64::consts::TAU / (sides as f64);
-        Line {
-            x1: cx + radius * a1.cos(),
-            y1: cy + radius * a1.sin(),
-            x2: cx + radius * a2.cos(),
-            y2: cy + radius * a2.sin(),
-            color,
-        }
-        .draw(painter);
-    }
-}
-
-/// Small outlined geometric marker for an orbiting tag, keyed by its orbit
-/// index so the tags around a node read as distinct shapes.
-fn draw_tag_marker(
-    painter: &mut Painter,
-    cx: f64,
-    cy: f64,
-    radius: f64,
-    index: usize,
-    color: Color,
-) {
-    match index % 6 {
-        0 => draw_outlined_shape(painter, cx, cy, radius, NodeShape::Circle, color),
-        1 => draw_regular_polygon(
-            painter,
-            cx,
-            cy,
-            radius,
-            3,
-            -std::f64::consts::FRAC_PI_2,
-            color,
-        ),
-        2 => draw_outlined_shape(painter, cx, cy, radius, NodeShape::Square, color),
-        3 => draw_outlined_shape(painter, cx, cy, radius, NodeShape::Diamond, color),
-        4 => draw_regular_polygon(
-            painter,
-            cx,
-            cy,
-            radius,
-            5,
-            -std::f64::consts::FRAC_PI_2,
-            color,
-        ),
-        _ => draw_regular_polygon(
-            painter,
-            cx,
-            cy,
-            radius,
-            6,
-            -std::f64::consts::FRAC_PI_2,
-            color,
-        ),
-    }
-}
-
 impl Shape for GraphNodesShape<'_> {
     fn draw(&self, painter: &mut Painter) {
         for node in self.nodes {
-            // Draw hover highlight ring (if hovered and not selected)
+            let mut current_radius = if node.filled && !node.extra_tag_colors.is_empty() {
+                node.radius * 2.25
+            } else {
+                node.radius
+            };
+
+            if node.filled {
+                paint_shape(
+                    painter,
+                    node.x,
+                    node.y,
+                    node.radius,
+                    node.shape,
+                    self.fill_step,
+                    |_, _| node.color,
+                );
+            } else {
+                draw_outlined_shape(painter, node.x, node.y, node.radius, node.shape, node.color);
+            }
+
+            if node.filled && !node.extra_tag_colors.is_empty() {
+                let n = node.extra_tag_colors.len();
+                for (i, &color) in node.extra_tag_colors.iter().enumerate() {
+                    let sat_color = if node.dimmed { Color::DarkGray } else { color };
+                    let theta = (i as f64) * std::f64::consts::TAU / (n as f64);
+                    let orbit_radius = node.radius * 1.75;
+                    let sx = node.x + orbit_radius * theta.cos();
+                    let sy = node.y + orbit_radius * theta.sin();
+
+                    paint_shape(
+                        painter,
+                        sx,
+                        sy,
+                        node.radius * 0.4,
+                        node.shape,
+                        self.fill_step,
+                        |_, _| sat_color,
+                    );
+                }
+            }
+
             if node.is_hovered && !node.is_selected {
-                let hover_radius = node.radius + 1.0;
+                current_radius += node.radius * 0.5;
                 draw_outlined_shape(
                     painter,
                     node.x,
                     node.y,
-                    hover_radius,
+                    current_radius,
                     node.shape,
                     Color::White,
                 );
             }
 
-            draw_outlined_shape(painter, node.x, node.y, node.radius, node.shape, node.color);
-
-            let indicator_radius = 1.2;
-            let orbit_radius = node.radius + 2.5;
-            let extra_count = node.extra_tag_colors.len();
-            for (i, &color) in node.extra_tag_colors.iter().enumerate() {
-                let angle = (i as f64) * std::f64::consts::TAU / (extra_count as f64)
-                    - std::f64::consts::FRAC_PI_2;
-                let cx = node.x + orbit_radius * angle.cos();
-                let cy = node.y + orbit_radius * angle.sin();
-                draw_tag_marker(painter, cx, cy, indicator_radius, i, color);
-            }
-
-            if node.is_selected {
-                let ring_radius = node.radius + 1.5;
+            if node.grow_ring {
+                current_radius += node.radius * 0.5;
                 draw_outlined_shape(
                     painter,
                     node.x,
                     node.y,
-                    ring_radius,
+                    current_radius,
+                    node.shape,
+                    node.color,
+                );
+            }
+
+            if node.is_selected {
+                current_radius += 1.5;
+                draw_outlined_shape(
+                    painter,
+                    node.x,
+                    node.y,
+                    current_radius,
                     node.shape,
                     node.selection_ring_color,
                 );
@@ -349,6 +402,8 @@ pub struct LabelData {
     pub node_idx: NodeIndex,
     pub x: f64,
     pub y: f64,
+    /// Node centre, so the label can be flipped below the node on collision.
+    pub node_y: f64,
 }
 
 pub struct FeatureFlags {
@@ -376,6 +431,8 @@ pub struct RenderCache {
 
     pub visible_nodes: HashSet<NodeIndex>,
     pub selected_neighbors: HashSet<NodeIndex>,
+    /// Nodes outside the selected node's neighborhood (drawn muted).
+    pub dimmed: HashSet<NodeIndex>,
     pub label_texts: HashMap<NodeIndex, String>,
     pub cached_label_max_length: usize,
 }
@@ -402,6 +459,7 @@ impl RenderCache {
             minimap_dirty: true,
             visible_nodes: HashSet::new(),
             selected_neighbors: HashSet::new(),
+            dimmed: HashSet::new(),
             label_texts: HashMap::new(),
             cached_label_max_length: usize::MAX,
         }
@@ -485,7 +543,7 @@ impl RenderCache {
                 NodeColorMode::Folder => &self.folder_colors,
                 _ => &self.tag_colors,
             };
-            if items.is_empty() {
+            if items.len() <= 1 {
                 None
             } else {
                 let mut sorted: Vec<_> = items.iter().collect();
@@ -513,6 +571,7 @@ impl RenderCache {
         settings: &Settings,
         edge_color: Color,
         tier: LodTier,
+        lit: &HashSet<NodeIndex>,
     ) {
         self.edges.clear();
 
@@ -525,7 +584,16 @@ impl RenderCache {
         for edge in graph.edge_references() {
             let src = &graph[edge.source()];
             let tgt = &graph[edge.target()];
-            let color = if uniform_edges {
+            let dimming = matches!(
+                settings.visual.selection_focus,
+                SelectionFocus::Dim | SelectionFocus::GrowDim
+            );
+            let color = if dimming
+                && !lit.is_empty()
+                && !(lit.contains(&edge.source()) && lit.contains(&edge.target()))
+            {
+                Color::DarkGray
+            } else if uniform_edges {
                 edge_color
             } else {
                 match settings.visual.edge_color_mode {
@@ -562,10 +630,12 @@ impl RenderCache {
         settings: &Settings,
         selected_node: Option<NodeIndex>,
         selected_nodes: &HashSet<NodeIndex>,
+        lit: &HashSet<NodeIndex>,
         selection_ring_color: Color,
         hovered_node: Option<NodeIndex>,
         x_bounds: [f64; 2],
         y_bounds: [f64; 2],
+        world_per_row: f64,
     ) -> LodTier {
         self.nodes.clear();
         self.visible_nodes.clear();
@@ -591,14 +661,50 @@ impl RenderCache {
             _ => LodTier::Minimal,
         };
 
+        let focus = settings.visual.selection_focus;
+        // `lit`: the selection plus its one-hop neighborhood, passed in by the
+        // caller; grow keeps these nodes large, dimming grays everything else.
+        self.dimmed.clear();
+        if selected_node.is_some() && matches!(focus, SelectionFocus::Dim | SelectionFocus::GrowDim)
+        {
+            self.dimmed.extend(
+                self.visible_nodes
+                    .iter()
+                    .copied()
+                    .filter(|i| !lit.contains(i)),
+            );
+        }
+        let grow = selected_node.is_some()
+            && matches!(focus, SelectionFocus::Grow | SelectionFocus::GrowDim);
+        let floor_rows = node_floor_rows(settings.visual.node_scale, graph.node_count());
+        let floor = floor_rows * world_per_row;
+
         for &idx in &self.visible_nodes {
             let node = &graph[idx];
-            let primary_color = self
-                .node_own_color
-                .get(&idx)
-                .copied()
-                .unwrap_or(Color::Gray);
-            let radius = node_world_radius(settings, self.max_link_count, node.data.link_count);
+            let primary_color = if self.dimmed.contains(&idx) {
+                Color::DarkGray
+            } else {
+                self.node_own_color
+                    .get(&idx)
+                    .copied()
+                    .unwrap_or(Color::Gray)
+            };
+            let base_radius =
+                node_world_radius(settings, self.max_link_count, node.data.link_count);
+            let grown = grow && lit.contains(&idx);
+            // Grown nodes are slightly enlarged; the detached ring makes them pop.
+            let radius = if grown {
+                base_radius.max(floor) * 1.2
+            } else {
+                base_radius.max(floor)
+            };
+            // Filled per `node_fill`: never, always (but not 1-dot minimal
+            // LOD), or dynamically at full detail with size to show for it.
+            let filled = match settings.visual.node_fill {
+                NodeFill::None => false,
+                NodeFill::Filled => true,
+                NodeFill::Dynamic => tier == LodTier::Full && (grown || floor_rows > 0.0),
+            };
 
             let is_selected = selected_node == Some(idx) || selected_nodes.contains(&idx);
             let is_hovered = hovered_node == Some(idx) && !is_selected;
@@ -608,12 +714,22 @@ impl RenderCache {
                     let extra_tag_colors: Vec<Color> = if node.data.tags.is_empty() {
                         Vec::new()
                     } else {
-                        node.data
-                            .tags
-                            .iter()
-                            .skip(1)
-                            .filter_map(|tag| self.tag_colors.get(tag).copied())
-                            .collect()
+                        let mut colors = Vec::new();
+                        let mut pal_idx = 0;
+                        for _ in &node.data.tags {
+                            while pal_idx < LOCAL_TAG_PALETTE.len()
+                                && LOCAL_TAG_PALETTE[pal_idx] == primary_color
+                            {
+                                pal_idx += 1;
+                            }
+                            if pal_idx < LOCAL_TAG_PALETTE.len() {
+                                colors.push(LOCAL_TAG_PALETTE[pal_idx]);
+                                pal_idx += 1;
+                            } else {
+                                colors.push(Color::White);
+                            }
+                        }
+                        colors
                     };
                     self.nodes.push(NodeRenderData {
                         x: node.location.x as f64,
@@ -625,6 +741,9 @@ impl RenderCache {
                         is_hovered,
                         selection_ring_color,
                         shape: settings.visual.node_shape,
+                        filled,
+                        dimmed: self.dimmed.contains(&idx),
+                        grow_ring: grown,
                     });
                 }
                 LodTier::Medium => {
@@ -638,7 +757,10 @@ impl RenderCache {
                         is_selected,
                         is_hovered: false,
                         selection_ring_color,
+                        filled,
                         shape: settings.visual.node_shape,
+                        dimmed: self.dimmed.contains(&idx),
+                        grow_ring: grown,
                     });
                 }
                 LodTier::Minimal => {
@@ -653,6 +775,9 @@ impl RenderCache {
                         is_hovered: false,
                         selection_ring_color,
                         shape: NodeShape::Circle,
+                        filled,
+                        dimmed: self.dimmed.contains(&idx),
+                        grow_ring: grown,
                     });
                 }
             }
@@ -696,6 +821,7 @@ impl RenderCache {
                         y: node.location.y as f64
                             + radius
                             + settings.visual.label_offset.max(min_offset_y),
+                        node_y: node.location.y as f64,
                     });
                 }
                 return;
@@ -740,8 +866,11 @@ impl RenderCache {
                 node_idx: idx,
                 x: node.location.x as f64,
                 y: node.location.y as f64 + radius + settings.visual.label_offset.max(min_offset_y),
+                node_y: node.location.y as f64,
             });
         }
+        // Stable order so collision resolution does not flicker between frames.
+        self.labels.sort_by_key(|l| l.node_idx);
     }
 }
 
@@ -782,19 +911,33 @@ pub fn draw_graph_view(
         }
         s
     };
+    let cell_world_height =
+        (y_bounds[1] - y_bounds[0]).abs() / (canvas_area.height as f64).max(1.0);
+    let cell_world_width = (x_bounds[1] - x_bounds[0]) / (canvas_area.width as f64).max(1.0);
+    let fill_step = fill_step_for(cell_world_width, cell_world_height);
+    let lit: HashSet<NodeIndex> = {
+        let mut lit = selected_set.clone();
+        if let Some(sel) = state.selection.primary {
+            for edge in graph.edges(sel) {
+                lit.insert(edge.source());
+                lit.insert(edge.target());
+            }
+        }
+        lit
+    };
     let tier = cache.fill_nodes(
         graph,
         settings,
         state.selection.primary,
         &selected_set,
+        &lit,
         colors.selected_indicator_color,
         hovered_node,
         x_bounds,
         y_bounds,
+        cell_world_height,
     );
-    cache.fill_edges(graph, settings, colors.edge_color, tier);
-    let cell_world_height =
-        (y_bounds[1] - y_bounds[0]).abs() / (canvas_area.height as f64).max(1.0);
+    cache.fill_edges(graph, settings, colors.edge_color, tier, &lit);
     cache.fill_labels(
         graph,
         settings,
@@ -807,6 +950,8 @@ pub fn draw_graph_view(
     let nodes_ref = &cache.nodes;
     let labels_ref = &cache.labels;
     let label_texts_ref = &cache.label_texts;
+    let label_colors_ref = &cache.node_own_color;
+    let dimmed_ref = &cache.dimmed;
 
     let block = ratatui::widgets::Block::default().style(
         ratatui::style::Style::default().bg(colors.background_color.unwrap_or(Color::Reset)),
@@ -816,6 +961,46 @@ pub fn draw_graph_view(
         (canvas_area.width.saturating_sub(1) as f64) / (x_bounds[1] - x_bounds[0]);
     let rows_per_world_y =
         -(canvas_area.height.saturating_sub(1) as f64) / (y_bounds[1] - y_bounds[0]);
+
+    // Resolve label collisions in cell space: above the node first, below it as a
+    // fallback, dropped when both would overprint an already placed label.
+    let rows_per_world_abs = rows_per_world_y.abs();
+    let mut occupied: Vec<(i64, i64, i64)> = Vec::new();
+    let mut label_draws: Vec<(f64, f64, ratatui::text::Span<'static>)> = Vec::new();
+    for label in labels_ref {
+        let Some(text) = label_texts_ref.get(&label.node_idx) else {
+            continue;
+        };
+        let width = text.chars().count() as i64;
+        let half_width = width as f64 / 2.0 / cols_per_world_x.max(1e-9);
+        let x = label.x - half_width;
+        let col0 = ((x - x_bounds[0]) * cols_per_world_x).floor() as i64;
+        let below_y = 2.0 * label.node_y - label.y;
+        let slot = [label.y, below_y].into_iter().find_map(|y| {
+            let row = ((y_bounds[1] - y) * rows_per_world_abs).floor() as i64;
+            let free = occupied
+                .iter()
+                .all(|&(r, c0, c1)| r != row || col0 > c1 || col0 + width < c0);
+            free.then_some((row, y))
+        });
+        let Some((row, y)) = slot else {
+            continue;
+        };
+        occupied.push((row, col0, col0 + width));
+        let fg = if dimmed_ref.contains(&label.node_idx) {
+            Color::DarkGray
+        } else {
+            label_colors_ref
+                .get(&label.node_idx)
+                .copied()
+                .unwrap_or(colors.label_color)
+        };
+        label_draws.push((
+            x,
+            y,
+            ratatui::text::Span::styled(text.clone(), ratatui::style::Style::default().fg(fg)),
+        ));
+    }
 
     let canvas = Canvas::default()
         .background_color(colors.background_color.unwrap_or(Color::Reset))
@@ -828,16 +1013,12 @@ pub fn draw_graph_view(
         .paint(move |ctx| {
             ctx.draw(&GraphEdgesShape { edges: edges_ref });
             ctx.layer();
-            ctx.draw(&GraphNodesShape { nodes: nodes_ref });
-            ctx.layer();
-            for label in labels_ref {
-                if let Some(text) = label_texts_ref.get(&label.node_idx) {
-                    let span = ratatui::text::Span::styled(
-                        text.clone(),
-                        ratatui::style::Style::default().fg(colors.label_color),
-                    );
-                    ctx.print(label.x, label.y, span);
-                }
+            ctx.draw(&GraphNodesShape {
+                nodes: nodes_ref,
+                fill_step,
+            });
+            for (x, y, span) in &label_draws {
+                ctx.print(*x, *y, span.clone());
             }
         });
 
@@ -1254,22 +1435,31 @@ pub fn draw_looking_glass(
 
     let bg = colors.background_color.unwrap_or(Color::Black);
 
+    let node_color = cache
+        .node_own_color
+        .get(&idx)
+        .copied()
+        .unwrap_or(Color::Gray);
+
     // Tags render below the fixed-size visual; the glass grows downward.
-    let tags: Vec<(String, Color)> = node
-        .data
-        .tags
-        .iter()
-        .map(|t| {
-            (
-                t.clone(),
-                cache
-                    .tag_colors
-                    .get(t)
-                    .copied()
-                    .unwrap_or(colors.label_color),
-            )
-        })
-        .collect();
+    let tags: Vec<(String, Color)> = {
+        let mut colors = Vec::new();
+        let mut pal_idx = 0;
+        for t in &node.data.tags {
+            while pal_idx < LOCAL_TAG_PALETTE.len() && LOCAL_TAG_PALETTE[pal_idx] == node_color {
+                pal_idx += 1;
+            }
+            let c = if pal_idx < LOCAL_TAG_PALETTE.len() {
+                let color = LOCAL_TAG_PALETTE[pal_idx];
+                pal_idx += 1;
+                color
+            } else {
+                Color::White
+            };
+            colors.push((t.clone(), c));
+        }
+        colors
+    };
 
     // Fixed visual height = the configured looking_glass_height (border
     // included). The link-count line + tag list extend the glass downward.
@@ -1312,29 +1502,28 @@ pub fn draw_looking_glass(
 
     // Radius matches the simulation's node-size computation exactly.
     let radius = node_world_radius(settings, cache.max_link_count, node.data.link_count);
-    let node_color = cache
-        .node_own_color
-        .get(&idx)
-        .copied()
-        .unwrap_or(Color::Gray);
-    let extra_tag_colors: Vec<Color> = if node.data.tags.is_empty() {
-        Vec::new()
+    let extra_tag_colors: Vec<Color> = tags.iter().map(|(_, c)| *c).collect();
+
+    let filled = match settings.visual.node_fill {
+        NodeFill::None => false,
+        NodeFill::Filled => true,
+        NodeFill::Dynamic => !matches!(settings.visual.node_scale, NodeScale::Fixed(1)),
+    };
+    let halo_offset = if filled && !extra_tag_colors.is_empty() {
+        radius * 1.25
     } else {
-        node.data
-            .tags
-            .iter()
-            .skip(1)
-            .filter_map(|t| cache.tag_colors.get(t).copied())
-            .take(8)
-            .collect()
+        0.0
     };
 
     let node_render = NodeRenderData {
+        filled,
+        dimmed: false,
         x: 0.0,
         y: 0.0,
         color: node_color,
         radius,
         extra_tag_colors,
+        grow_ring: false,
         is_selected: false,
         is_hovered: false,
         selection_ring_color: colors.selected_indicator_color,
@@ -1342,10 +1531,22 @@ pub fn draw_looking_glass(
     };
 
     // Bounds fit the node + tag orbit + selection ring, with the same
-    // terminal-aspect correction the main canvas uses.
+    // terminal-aspect correction the main canvas uses. Ensure both dimensions
+    // fit without clipping.
     let aspect = glass_canvas_area.width as f64 / glass_canvas_area.height as f64;
-    let half_h = radius + 4.0;
-    let half_w = half_h * crate::viewport::CELL_ASPECT * aspect;
+    let required_extent = radius + halo_offset + 2.0;
+
+    // Compute the minimum half_h needed so both h and w fit required_extent.
+    let mut half_h = required_extent;
+    let mut half_w = half_h * crate::viewport::CELL_ASPECT * aspect;
+
+    if half_w < required_extent {
+        half_h = required_extent / (crate::viewport::CELL_ASPECT * aspect);
+        half_w = required_extent;
+    }
+    let glass_cell_w = (2.0 * half_w) / (glass_canvas_area.width as f64).max(1.0);
+    let glass_cell_h = (2.0 * half_h) / (glass_canvas_area.height as f64).max(1.0);
+    let glass_fill_step = fill_step_for(glass_cell_w, glass_cell_h);
 
     let canvas = Canvas::default()
         .background_color(bg)
@@ -1357,6 +1558,7 @@ pub fn draw_looking_glass(
         .paint(|ctx| {
             ctx.draw(&GraphNodesShape {
                 nodes: std::slice::from_ref(&node_render),
+                fill_step: glass_fill_step,
             });
         });
     frame.render_widget(canvas, glass_canvas_area);
@@ -1701,10 +1903,12 @@ mod tests {
             &settings,
             Some(idx1),
             &selected_nodes,
+            &selected_nodes,
             ratatui::style::Color::Red,
             None,
             TEST_X_BOUNDS,
             TEST_Y_BOUNDS,
+            0.0,
         );
         cache.fill_labels(&graph, &settings, Some(idx1), &selected_nodes, 0.0, _tier);
         assert!(cache.labels.is_empty());
@@ -1716,10 +1920,12 @@ mod tests {
             &settings,
             Some(idx1),
             &selected_nodes,
+            &selected_nodes,
             ratatui::style::Color::Red,
             None,
             TEST_X_BOUNDS,
             TEST_Y_BOUNDS,
+            0.0,
         );
         cache.fill_labels(&graph, &settings, Some(idx1), &selected_nodes, 0.0, _tier);
         assert_eq!(cache.labels.len(), 3);
@@ -1731,10 +1937,12 @@ mod tests {
             &settings,
             Some(idx1),
             &selected_nodes,
+            &selected_nodes,
             ratatui::style::Color::Red,
             None,
             TEST_X_BOUNDS,
             TEST_Y_BOUNDS,
+            0.0,
         );
         cache.fill_labels(&graph, &settings, Some(idx1), &selected_nodes, 0.0, _tier);
         assert_eq!(cache.labels.len(), 1);
@@ -1750,10 +1958,12 @@ mod tests {
             &settings,
             Some(idx1),
             &selected_nodes,
+            &selected_nodes,
             ratatui::style::Color::Red,
             None,
             TEST_X_BOUNDS,
             TEST_Y_BOUNDS,
+            0.0,
         );
         cache.fill_labels(&graph, &settings, Some(idx1), &selected_nodes, 0.0, _tier);
         // Node 1 (selected) and Node 2 (neighbor) should have labels. Node 3 (distant) should not.
@@ -1772,10 +1982,12 @@ mod tests {
             &settings,
             Some(idx1),
             &selected_nodes,
+            &selected_nodes,
             ratatui::style::Color::Red,
             None,
             TEST_X_BOUNDS,
             TEST_Y_BOUNDS,
+            0.0,
         );
         settings.visual.label_mode = LabelMode::Selected;
         cache.fill_labels(&graph, &settings, Some(idx1), &selected_nodes, 10.0, _tier);
@@ -1794,5 +2006,244 @@ mod tests {
         let label = &cache.labels[0];
         // The default label_offset is 4.0, which is larger than min_offset_y of 1.0. The actual offset should be 4.0.
         assert_eq!(label.y, node_y + radius + 4.0);
+    }
+}
+
+#[cfg(test)]
+mod node_scale_tests {
+    use super::node_floor_rows;
+    use crate::settings::NodeScale;
+
+    #[test]
+    fn automatic_fades_from_large_to_small_with_vault_size() {
+        assert_eq!(node_floor_rows(NodeScale::Fixed(1), 10), 0.0);
+        assert!((node_floor_rows(NodeScale::Fixed(10), 5_000) - 0.9).abs() < 1e-9);
+        let small_vault = node_floor_rows(NodeScale::Automatic, 20);
+        let mid_vault = node_floor_rows(NodeScale::Automatic, 250);
+        let big_vault = node_floor_rows(NodeScale::Automatic, 1_000);
+        assert!((small_vault - node_floor_rows(NodeScale::Fixed(10), 20)).abs() < 1e-9);
+        assert!(mid_vault > 0.0 && mid_vault < small_vault);
+        assert_eq!(big_vault, 0.0);
+    }
+
+    #[test]
+    fn fixed_scale_spans_small_to_large_linearly() {
+        assert_eq!(node_floor_rows(NodeScale::Fixed(1), 10), 0.0);
+        assert!((node_floor_rows(NodeScale::Fixed(10), 5_000) - 0.9).abs() < 1e-9);
+        assert!((node_floor_rows(NodeScale::Fixed(5), 100) - 0.9 * 4.0 / 9.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod dim_tests {
+    use super::*;
+    use crate::graph::NodeSpec;
+    use crate::theme::theme_colors;
+
+    fn lit_set(
+        graph: &fdg_sim::ForceGraph<crate::graph::GraphNodeData, ()>,
+        sel: NodeIndex,
+    ) -> HashSet<NodeIndex> {
+        let mut lit = HashSet::new();
+        lit.insert(sel);
+        for edge in graph.edges(sel) {
+            lit.insert(edge.source());
+            lit.insert(edge.target());
+        }
+        lit
+    }
+
+    fn build(
+        specs: &[NodeSpec],
+    ) -> (
+        GraphState,
+        Settings,
+        RenderCache,
+        std::collections::HashMap<String, NodeIndex>,
+    ) {
+        let mut settings = Settings::default();
+        settings.filter.show_orphan = true;
+        settings.visual.selection_focus = SelectionFocus::Dim;
+        let state = GraphState::from_specs(specs, &settings).unwrap();
+        let graph = state.simulation.get_graph();
+        let ids: std::collections::HashMap<String, NodeIndex> = graph
+            .node_indices()
+            .map(|i| (graph[i].data.id.clone(), i))
+            .collect();
+        let mut cache = RenderCache::new();
+        cache.rebuild_topology(
+            graph,
+            &settings,
+            &theme_colors(&settings.visual.theme, settings.visual.background.clone()),
+            false,
+        );
+        (state, settings, cache, ids)
+    }
+
+    #[test]
+    fn dim_grays_everything_outside_selection_neighborhood() {
+        let specs = vec![
+            NodeSpec {
+                id: "a".into(),
+                title: "a".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec!["b".into()],
+            },
+            NodeSpec {
+                id: "b".into(),
+                title: "b".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec!["a".into(), "c".into()],
+            },
+            NodeSpec {
+                id: "c".into(),
+                title: "c".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec!["b".into()],
+            },
+            NodeSpec {
+                id: "x".into(),
+                title: "x".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec!["y".into()],
+            },
+            NodeSpec {
+                id: "y".into(),
+                title: "y".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec!["x".into()],
+            },
+            NodeSpec {
+                id: "z".into(),
+                title: "z".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec![],
+            },
+        ];
+        let (mut state, settings, mut cache, ids) = build(&specs);
+        let b = ids["b"];
+        state.selection.primary = Some(b);
+        let selected_set: HashSet<NodeIndex> = HashSet::from([b]);
+        let lit = lit_set(state.simulation.get_graph(), b);
+
+        let graph = state.simulation.get_graph();
+        let tier = cache.fill_nodes(
+            graph,
+            &settings,
+            Some(b),
+            &selected_set,
+            &lit,
+            Color::White,
+            None,
+            [-1e9, 1e9],
+            [-1e9, 1e9],
+            1.0,
+        );
+        cache.fill_edges(graph, &settings, Color::White, tier, &lit);
+
+        // a, b, c lit; x, y, z dimmed.
+        assert_eq!(
+            cache
+                .nodes
+                .iter()
+                .filter(|n| n.color == Color::DarkGray)
+                .count(),
+            3
+        );
+        assert_eq!(
+            cache
+                .nodes
+                .iter()
+                .filter(|n| n.color != Color::DarkGray)
+                .count(),
+            3
+        );
+        assert!(
+            cache
+                .nodes
+                .iter()
+                .all(|n| n.dimmed == (n.color == Color::DarkGray))
+        );
+        // Only the x-y edge (both endpoints outside lit) dims.
+        assert_eq!(
+            cache
+                .edges
+                .iter()
+                .filter(|e| e.color == Color::DarkGray)
+                .count(),
+            1
+        );
+        assert_eq!(cache.edges.len(), 3);
+    }
+
+    #[test]
+    fn edge_between_two_lit_neighbors_stays_colored() {
+        let specs = vec![
+            NodeSpec {
+                id: "a".into(),
+                title: "a".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec!["b".into(), "c".into()],
+            },
+            NodeSpec {
+                id: "b".into(),
+                title: "b".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec!["a".into(), "c".into()],
+            },
+            NodeSpec {
+                id: "c".into(),
+                title: "c".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec!["b".into(), "a".into()],
+            },
+        ];
+        let (mut state, settings, mut cache, ids) = build(&specs);
+        let b = ids["b"];
+        state.selection.primary = Some(b);
+        let selected_set: HashSet<NodeIndex> = HashSet::from([b]);
+        let lit = lit_set(state.simulation.get_graph(), b);
+
+        let graph = state.simulation.get_graph();
+        let tier = cache.fill_nodes(
+            graph,
+            &settings,
+            Some(b),
+            &selected_set,
+            &lit,
+            Color::White,
+            None,
+            [-1e9, 1e9],
+            [-1e9, 1e9],
+            1.0,
+        );
+        cache.fill_edges(graph, &settings, Color::White, tier, &lit);
+
+        // a-b, b-c touch the selection; a-c has both endpoints lit -> stays colored.
+        assert_eq!(cache.edges.len(), 3);
+        assert!(
+            cache.edges.iter().all(|e| e.color != Color::DarkGray),
+            "all edges are within the lit neighborhood"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fill_tests {
+    use super::fill_step_for;
+
+    #[test]
+    fn fill_step_is_quarter_of_smaller_cell_dimension() {
+        assert_eq!(fill_step_for(2.0, 4.0), 0.5);
+        assert_eq!(fill_step_for(4.0, 2.0), 0.5);
     }
 }

@@ -1,6 +1,6 @@
 use std::fs;
 // Re-export library types for binary compatibility
-pub use crate::settings::{LabelMode, LegendPosition};
+pub use crate::settings::{LabelMode, LegendPosition, NodeScale};
 use std::path::PathBuf;
 
 use directories::ProjectDirs;
@@ -64,6 +64,13 @@ impl GrafConfig {
             errs.push(format!(
                 "visual.node_size must be 1.0-5.0, got {}",
                 self.visual.node_size
+            ));
+        }
+        if let NodeScale::Fixed(n) = self.visual.node_scale
+            && !(1..=10).contains(&n)
+        {
+            errs.push(format!(
+                "visual.node_scale must be 1-10 or \"automatic\", got {n}"
             ));
         }
         if self.visual.edge_thickness < 1 || self.visual.edge_thickness > 3 {

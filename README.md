@@ -62,7 +62,10 @@ https://github.com/user-attachments/assets/de06ffda-a1f6-4317-9cd2-f7a222c13f18
 
 - **Minimap** - toggleable minimap that shows the entire canvas.
 - **Status bar** — template-based with variables: `{files}`, `{links}`, `{selected}`, `{date}`, `{time}`, `{size}`, `{ratio}`.
-- **Legend** — shows tag or folder color mapping; configurable position and max items.
+- **Legend** — shows tag or folder color mapping; configurable position and max items; hidden when it would list a single entry.
+- **Node scale** — `automatic` gives filled, roomy nodes on small vaults and the classic compact look on big ones; `small` and `large` pin either.
+- **Selection focus** — selecting a node grows it and its neighbors (`grow`), grays out everything else (`dim`), both, or nothing.
+- **Readable labels** — centered on the node, tinted with its color, and moved or dropped instead of overprinting a neighbor.
 - **Grid overlay** — configurable number of divisions per axis.
 - **Help overlay** — press `?` for a quick reference of all controls.
 
@@ -182,6 +185,9 @@ label_mode = "selected"
 label_max_length = 20
 node_size = 2.0
 node_size_mode = "link_count"
+node_scale = 5
+node_fill = "dynamic"
+selection_focus = "grow"
 edge_thickness = 1
 show_legend = true
 show_grid = false
