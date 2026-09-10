@@ -2,6 +2,54 @@
 
 All notable changes to graf are documented in this file.
 
+## [1.1.0] - 2026-09-10
+
+### Added
+
+- Use concentric halos for extra tags
+- Segmented border tag rendering
+- Tag wedges inside nodes
+- Grow ring border with slight enlarge
+- Node_fill config (dynamic|filled|none)
+- Smoothstep automatic scale curve
+- Integer node_scale 1-10
+- Make node scale and selection focus configurable
+- Solid nodes, label collision handling, focus dimming, auto-fit on settle
+- Added menu_shortcut_color to match pinstar shortcut style
+- Styling updates to match pinstar context menu
+
+### CI
+
+- Applied recommended clippy fixes
+
+### Fixed
+
+- Tags now use local colors
+- Reverted tag rendering logic
+- Fixed filled nodes not rendering when zoomed out
+- Scale halo/ring spacing proportionally to node radius for artifact-free rendering
+- Draw node body after halos for prominence at low LOD
+- Restore looking glass bounds dropped during refactor
+- Fill square and diamond node shapes
+- Dense cell-aligned node fill
+- Strip verbose comments from default config
+- Grow multiplier uses actual node size
+- Dim entire graph outside selection neighborhood
+- Fixed toggle shortcuts not working
+- Use theme background for context menu
+
+### Miscellaneous
+
+- Added API.md and updated README.md
+- Updated README
+- README.md updates
+
+### Styling
+
+- Ran cargo fmt
+- Cargo fmt
+- Cargo fmt
+- Cargo fmt
 ## [1.0.0] - 2026-09-05
 
 ### CI
@@ -18,6 +66,10 @@ All notable changes to graf are documented in this file.
 ### Styling
 
 - Cargo fmt
+
+### Release
+
+- V1.0.0
 ## [0.5.0] - 2026-09-04
 
 ### Added
