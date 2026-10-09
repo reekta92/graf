@@ -264,6 +264,7 @@ fn apply_graph_action(
             source_id,
             target_title,
             create,
+            ..
         } => {
             apply_connection(app_state, &source_id, &target_title, create);
             None

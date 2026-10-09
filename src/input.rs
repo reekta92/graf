@@ -29,6 +29,7 @@ pub enum GraphAction {
     ConnectionEvent {
         source_id: String,
         target_title: String,
+        target_id: String,
         create: bool,
     },
     ClearFocus,
@@ -384,15 +385,16 @@ pub fn handle_graph_mouse(
                         if let (Some(src), Some(source_id), Some(tidx)) =
                             (src_idx, source_id, target_idx)
                             && src != tidx
-                            && let Some(target_title) = guard
+                            && let Some(target) = guard
                                 .simulation
                                 .get_graph()
                                 .node_weight(tidx)
-                                .map(|n| n.data.title.clone())
+                                .map(|n| (n.data.id.clone(), n.data.title.clone()))
                         {
                             conn_action = Some(GraphAction::ConnectionEvent {
                                 source_id,
-                                target_title,
+                                target_id: target.0,
+                                target_title: target.1,
                                 create,
                             });
                         }

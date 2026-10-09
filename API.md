@@ -367,7 +367,7 @@ if let Some(action) = handle_graph_keys(&state, key_event, &settings, &keymap) {
         GraphAction::ToggleSearch => { /* show/hide search popup */ }
         GraphAction::Refresh => { /* rescan files, rebuild graph */ }
         GraphAction::MenuAction(item) => { /* context menu pick */ }
-        GraphAction::ConnectionEvent { source_id, target_title, create } => {
+        GraphAction::ConnectionEvent { source_id, target_id, target_title, create } => {
             // Wikilink connection created/deleted
         }
         _ => {}
@@ -430,7 +430,7 @@ pub enum GraphAction {
     TogglePreview,
     ToggleLookingGlass,
     MenuAction(MenuItem),
-    ConnectionEvent { source_id: String, target_title: String, create: bool },
+    ConnectionEvent { source_id: String, target_id: String, target_title: String, create: bool },
     ClearFocus,
 
     // Stateful (consumed by apply_action)
