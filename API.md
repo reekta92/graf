@@ -133,12 +133,14 @@ The input type for graph construction. Each node needs:
 ```rust
 pub struct NodeSpec {
     pub id: String,        // unique identifier
-    pub title: String,     // display name (used for link resolution)
+    pub title: String,     // display name; unique legacy title fallback
     pub tags: Vec<String>, // used for coloring in "tag" color mode
     pub folder: String,    // used for coloring in "folder" color mode
-    pub links: Vec<String>,// titles of linked nodes (resolved case-insensitively)
+    pub links: Vec<String>,// exact target IDs, or unique case-insensitive legacy titles
 }
 ```
+
+`build_graph` resolves each link by exact, case-sensitive `id` first. Otherwise it accepts a case-insensitive title only when exactly one input node has that title. Ambiguous titles remain unresolved, including when tag filtering or node caps remove one duplicate. Duplicate node IDs return an error. Source identity, orphan detection, degree-based node caps and edge deduplication use IDs; displayed labels remain titles. Prefer IDs whenever titles can repeat.
 
 If your data source is a directory of markdown files, use the built-in scanner:
 

@@ -431,7 +431,25 @@ pub fn build_graph(
     settings: &Settings,
 ) -> anyhow::Result<ForceGraph<GraphNodeData, ()>> {
     let mut graph: ForceGraph<GraphNodeData, ()> = ForceGraph::default();
-    let mut title_to_index: HashMap<String, NodeIndex> = HashMap::new();
+    let mut id_to_index: HashMap<&str, NodeIndex> = HashMap::new();
+    let mut ids = HashSet::new();
+    let mut titles: HashMap<String, Option<&str>> = HashMap::new();
+    for node in nodes {
+        anyhow::ensure!(
+            ids.insert(node.id.as_str()),
+            "Duplicate graph node ID: {}",
+            node.id
+        );
+        titles
+            .entry(node.title.to_lowercase())
+            .and_modify(|target| *target = None)
+            .or_insert(Some(&node.id));
+    }
+    let resolve = |target: &str| {
+        ids.get(target)
+            .copied()
+            .or_else(|| titles.get(&target.to_lowercase()).copied().flatten())
+    };
 
     let show_orphan = settings.filter.show_orphan;
 
@@ -449,38 +467,43 @@ pub fn build_graph(
         valid_nodes.push(node);
     }
 
-    // 2. Map valid titles for edge validation
-    let valid_titles: HashSet<String> =
-        valid_nodes.iter().map(|n| n.title.to_lowercase()).collect();
-
-    // 3. Find titles that participate in at least one valid edge
-    let mut has_valid_edge = HashSet::new();
-    if !show_orphan {
-        for node in &valid_nodes {
-            let source_title = node.title.to_lowercase();
-            for link in &node.links {
-                let target_title = link.to_lowercase();
-                if target_title != source_title && valid_titles.contains(&target_title) {
-                    has_valid_edge.insert(source_title.clone());
-                    has_valid_edge.insert(target_title);
-                }
+    // Resolve before filtering/capping: removing one duplicate title must not
+    // make an ambiguous legacy link point at the other node.
+    let valid_ids: HashSet<&str> = valid_nodes.iter().map(|node| node.id.as_str()).collect();
+    let mut edges = std::collections::BTreeSet::new();
+    for node in &valid_nodes {
+        let source = node.id.as_str();
+        for target in node.links.iter().filter_map(|link| resolve(link)) {
+            if source != target && valid_ids.contains(target) {
+                edges.insert(if source < target {
+                    (source, target)
+                } else {
+                    (target, source)
+                });
             }
         }
     }
-
-    // 4. Collect final candidates (excluding orphans if requested)
-    let mut candidates: Vec<&NodeSpec> = Vec::new();
-    for node in valid_nodes {
-        if !show_orphan && !has_valid_edge.contains(&node.title.to_lowercase()) {
-            continue;
-        }
-        candidates.push(node);
+    let mut degrees: HashMap<&str, usize> = HashMap::new();
+    for &(source, target) in &edges {
+        *degrees.entry(source).or_default() += 1;
+        *degrees.entry(target).or_default() += 1;
     }
+    let mut candidates: Vec<&NodeSpec> = valid_nodes
+        .into_iter()
+        .filter(|node| show_orphan || degrees.contains_key(node.id.as_str()))
+        .collect();
 
     // Apply max_node cap: keep most-connected nodes
     let max_node = settings.max_node;
     if max_node > 0 && candidates.len() > max_node {
-        candidates.sort_by_key(|b| std::cmp::Reverse(b.links.len()));
+        candidates.sort_by(|a, b| {
+            degrees
+                .get(b.id.as_str())
+                .copied()
+                .unwrap_or(0)
+                .cmp(&degrees.get(a.id.as_str()).copied().unwrap_or(0))
+                .then_with(|| a.id.cmp(&b.id))
+        });
         candidates.truncate(max_node);
     }
 
@@ -495,31 +518,18 @@ pub fn build_graph(
         };
 
         let idx = graph.add_force_node(&node.title, data);
-        title_to_index.insert(node.title.to_lowercase(), idx);
+        id_to_index.insert(&node.id, idx);
     }
 
     let mut has_final_edge = std::collections::HashSet::new();
 
-    for node in nodes {
-        let source_title = node.title.to_lowercase();
-
-        let source_idx = match title_to_index.get(&source_title) {
-            Some(&idx) => idx,
-            None => continue,
-        };
-
-        let mut seen_targets = std::collections::HashSet::new();
-        for link in &node.links {
-            let target_lower = link.to_lowercase();
-            if let Some(&target_idx) = title_to_index.get(&target_lower)
-                && target_idx != source_idx
-                && seen_targets.insert(target_idx)
-                && graph.edges_connecting(source_idx, target_idx).count() == 0
-            {
-                graph.add_edge(source_idx, target_idx, ());
-                has_final_edge.insert(source_idx);
-                has_final_edge.insert(target_idx);
-            }
+    for (source, target) in edges {
+        if let (Some(&source_idx), Some(&target_idx)) =
+            (id_to_index.get(source), id_to_index.get(target))
+        {
+            graph.add_edge(source_idx, target_idx, ());
+            has_final_edge.insert(source_idx);
+            has_final_edge.insert(target_idx);
         }
     }
 
@@ -938,6 +948,70 @@ pub fn apply_connection_change(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_identity_uses_ids_and_only_unique_legacy_titles() -> anyhow::Result<()> {
+        let node = |id: &str, title: &str, links: &[&str]| NodeSpec {
+            id: id.into(),
+            title: title.into(),
+            links: links.iter().map(|link| (*link).into()).collect(),
+            tags: Vec::new(),
+            folder: String::new(),
+        };
+        let specs = vec![
+            node("one.md", "Duplicate", &["unique.md"]),
+            node("two.md", "Duplicate", &[]),
+            node("unique.md", "Unique", &[]),
+            node(
+                "source.md",
+                "Source",
+                &["one.md", "two.md", "Duplicate", "uNiQuE", "unique.md"],
+            ),
+            node("orphan.md", "Orphan", &["Duplicate"]),
+        ];
+        let mut settings = Settings::default();
+        settings.filter.show_orphan = true;
+        let graph = build_graph(&specs, &settings)?;
+        let index = |id| {
+            graph
+                .node_indices()
+                .find(|index| graph[*index].data.id == id)
+                .expect("node")
+        };
+        assert_eq!(graph.edge_count(), 4);
+        assert_eq!(
+            graph
+                .edges_connecting(index("source.md"), index("one.md"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            graph
+                .edges_connecting(index("source.md"), index("two.md"))
+                .count(),
+            1
+        );
+        assert_eq!(graph[index("unique.md")].data.link_count, 2);
+        assert_eq!(graph[index("orphan.md")].data.link_count, 0);
+        settings.filter.show_orphan = false;
+        let filtered = build_graph(&specs, &settings)?;
+        assert_eq!(filtered.node_count(), 4);
+        assert!(
+            filtered
+                .node_weights()
+                .all(|node| node.data.id != "orphan.md")
+        );
+        settings.max_node = 2;
+        let capped = build_graph(&specs, &settings)?;
+        assert_eq!(capped.edge_count(), 1);
+        assert!(
+            capped
+                .node_weights()
+                .all(|node| node.data.id == "source.md" || node.data.id == "one.md")
+        );
+        assert!(build_graph(&[specs[0].clone(), specs[0].clone()], &settings).is_err());
+        Ok(())
+    }
 
     #[test]
     fn test_selection_new() {
