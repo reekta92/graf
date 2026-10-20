@@ -15,6 +15,6 @@ jobs:
       clin_ref: 44e85153c954194d0cfe283691f4d57fc393514c
 
   ci:
-    uses: reekta92/.github/.github/workflows/ci.yml@cd3555902eaf73f17c76ca55108ab309afddd136
+    uses: reekta92/.github/.github/workflows/ci.yml@c688321f0d643fe76d408206365952e7d94c3385
     permissions:
       contents: read
