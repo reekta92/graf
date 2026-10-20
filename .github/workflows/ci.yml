@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   clin-compat:
@@ -14,6 +15,6 @@ jobs:
       clin_ref: 44e85153c954194d0cfe283691f4d57fc393514c
 
   ci:
-    uses: reekta92/.github/.github/workflows/ci.yml@91cb0fbf33f0c10f1ed7fb5005e15882945a89a0
+    uses: reekta92/.github/.github/workflows/ci.yml@044585a8495941cdc2a11533543e79448fc13868
     permissions:
       contents: read

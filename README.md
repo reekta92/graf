@@ -74,7 +74,7 @@ https://github.com/user-attachments/assets/de06ffda-a1f6-4317-9cd2-f7a222c13f18
 ## Installation
 
 ### Debian, Fedora, Arch Linux
-Refer to the [releases](https://github.com/reekta92/graf/releases) page for the latest release.
+Releases publish `graf-rs` to crates.io. Install the standalone binary with `cargo install graf-rs`; older binary assets remain on the releases page.
 
 ### Cargo
 
@@ -92,7 +92,7 @@ cargo install --path .
 
 #### Dependencies
 
-- Rust 1.85+ (Edition 2024)
+- Rust 1.88+ (Edition 2024)
 
 - - -
 
