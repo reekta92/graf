@@ -73,13 +73,13 @@ https://github.com/user-attachments/assets/de06ffda-a1f6-4317-9cd2-f7a222c13f18
 
 ## Installation
 
-### Debian, Fedora, Arch Linux
-Releases publish `graf-rs` to crates.io. Install the standalone binary with `cargo install graf-rs`; older binary assets remain on the releases page.
+### Prebuilt Linux archives
+[GitHub Releases](https://github.com/reekta92/graf/releases) include installation instructions, Linux x86_64 and ARM64 CLI archives (`graf-rs-<version>-<target>.tar.xz` / `.tar.gz`), the Cargo source archive, and `SHA256SUMS`. Binary archives contain the executable at the root, `LICENSE`, and `README.md`; Linux builds require glibc 2.35 or newer. AUR maintainers can use these versioned archives and hashes in their PKGBUILDs. Each release publishes `graf-rs` to crates.io before publishing its GitHub release.
 
 ### Cargo
 
 ```bash
-cargo install graf-rs
+cargo install graf-rs --locked
 ```
 
 ### From source
