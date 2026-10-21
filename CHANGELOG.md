@@ -2,6 +2,30 @@
 
 All notable changes to graf are documented in this file.
 
+## [1.1.1] - 2026-10-21
+
+### CI
+
+- Release Linux archives and installation instructions (#27)
+- Pin validated Clin main
+- Pin the final portable Clin consumer
+- Include Clin native Canvas identity fixes
+- Validate the published-dependency Clin consumer
+- Adopt verified packaged policy discovery
+- Adopt native package checks and protected release validation
+- Include Unicode-safe consumer compatibility checks
+- Check Clin adapters against library candidates
+
+### Fixed
+
+- Use release archive verification proven with current Cargo
+
+### Miscellaneous
+
+- Bump toml from 1.1.6+spec-1.1.0 to 1.1.8+spec-1.1.0
+- Bump clap from 4.6.6 to 4.6.7
+- Bump toml from 1.1.5+spec-1.1.0 to 1.1.6+spec-1.1.0
+- Add flake.lock for reproducible builds
 ## [1.1.0] - 2026-09-10
 
 ### Added
@@ -50,6 +74,10 @@ All notable changes to graf are documented in this file.
 - Cargo fmt
 - Cargo fmt
 - Cargo fmt
+
+### Release
+
+- V1.1.0
 ## [1.0.0] - 2026-09-05
 
 ### CI
