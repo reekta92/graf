@@ -45,7 +45,8 @@ jobs:
     permissions:
       contents: write
       actions: write
-    uses: reekta92/.github/.github/workflows/rust-release.yml@c688321f0d643fe76d408206365952e7d94c3385
+      statuses: write
+    uses: reekta92/.github/.github/workflows/rust-release.yml@0b563c110a6df98c00a85b44593fd3afe6863480
     with:
       release_kind: crate
       bump: ${{ inputs.bump }}

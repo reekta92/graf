@@ -9,7 +9,7 @@
 ```toml
 # Cargo.toml
 [dependencies]
-graf = { package = "graf-rs", git = "https://github.com/reekta92/graf", tag = "v1.0.0" }
+graf = { package = "graf-rs", version = "1.1.0" }
 
 # graf re-exports symbols from these crates; you will likely need them directly
 fdg-sim = "0.9"
