@@ -46,9 +46,12 @@ jobs:
       contents: write
       actions: write
       statuses: write
-    uses: reekta92/.github/.github/workflows/rust-release.yml@0b563c110a6df98c00a85b44593fd3afe6863480
+    uses: reekta92/.github/.github/workflows/rust-release.yml@abf1d7e22d5c821607c4933011cce4c3fd41c8cc
     with:
       release_kind: crate
+      BIN_NAME: graf
+      PKG_PREFIX: graf-rs
+      build_targets: linux-only
       bump: ${{ inputs.bump }}
       prerelease: ${{ inputs.prerelease }}
       prerelease_identifier: ${{ inputs.prerelease_identifier }}
