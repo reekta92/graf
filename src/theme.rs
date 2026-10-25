@@ -1,5 +1,5 @@
 use crate::settings::{Background, Theme};
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 
 // ── Theme Colors ─────────────────────────────────────────────────────────────
 
@@ -22,6 +22,7 @@ pub struct ThemeColors {
     pub highlight_bg: Option<Color>,
     pub menu_bg_color: Option<Color>,
     pub menu_shortcut_color: Option<Color>,
+    pub menu_hover: Style,
 }
 
 struct ThemePalette {
@@ -62,6 +63,7 @@ impl ThemePalette {
             highlight_bg: None,
             menu_bg_color: None,
             menu_shortcut_color: None,
+            menu_hover: Style::default().bg(Color::DarkGray),
         }
     }
 }
@@ -286,6 +288,7 @@ fn default_theme_colors(background: Background) -> ThemeColors {
         highlight_bg: None,
         menu_bg_color: None,
         menu_shortcut_color: None,
+        menu_hover: Style::default().bg(Color::DarkGray),
     }
 }
 

@@ -126,28 +126,35 @@ impl ContextMenu {
             .items
             .iter()
             .map(|i| {
-                let base = i.label.chars().count();
+                let base = ratatui::text::Line::from(i.label).width();
                 let square = if i.color_hint.is_some() { 2 } else { 0 }; // "■ "
                 let shortcut = i.shortcut.map_or(0, |_| 2); // "c "
                 base + square + shortcut + 4 // 2 left + 2 right pad
             })
             .max()
             .unwrap_or(0);
-        let width = max_content.max(8) as u16;
-        let height = self.items.len() as u16;
-        let x = self
-            .x
-            .min(area.x.saturating_add(area.width.saturating_sub(width)));
-        let y = self
-            .y
-            .min(area.y.saturating_add(area.height.saturating_sub(height)));
+        let width = max_content.max(8).min(area.width as usize) as u16;
+        let height = self.items.len().min(area.height as usize) as u16;
+        let x = self.x.clamp(
+            area.x,
+            area.x.saturating_add(area.width.saturating_sub(width)),
+        );
+        let y = self.y.clamp(
+            area.y,
+            area.y.saturating_add(area.height.saturating_sub(height)),
+        );
         Rect::new(x, y, width, height)
     }
     /// Menu row index at a screen position, if any.
+    pub fn visible_offset(&self, height: u16) -> usize {
+        self.selected
+            .saturating_sub(height.saturating_sub(1) as usize)
+    }
+
     pub fn row_at(&self, rect: Rect, col: u16, row: u16) -> Option<usize> {
         if col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
         {
-            let idx = (row - rect.y) as usize;
+            let idx = self.visible_offset(rect.height) + (row - rect.y) as usize;
             (idx < self.items.len()).then_some(idx)
         } else {
             None
@@ -1072,5 +1079,19 @@ mod tests {
         m.clear();
         assert_eq!(m.start, None);
         assert_eq!(m.end, None);
+    }
+    #[test]
+    fn overflowing_menu_keeps_selection_visible_and_hit_testing_aligned() {
+        let area = ratatui::layout::Rect::new(5, 4, 12, 3);
+        let mut menu = ContextMenu::new(
+            0,
+            0,
+            (0..20).map(|_| MenuItemSpec::new("界面 label")).collect(),
+        );
+        menu.selected = 19;
+        let rect = menu.rect(area);
+        assert_eq!(rect, area);
+        assert_eq!(menu.row_at(rect, rect.x, rect.bottom() - 1), Some(19));
+        assert_eq!(menu.visible_offset(rect.height), 17);
     }
 }
