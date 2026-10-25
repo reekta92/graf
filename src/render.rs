@@ -1674,7 +1674,7 @@ fn render_context_menu(
             let label = format!("{}  ", spec.label);
             spans.push(ratatui::text::Span::styled(label, base));
             // dynamic padding so shortcut right-aligns.
-            let content_len = spec.label.chars().count()
+            let content_len = ratatui::text::Line::from(spec.label).width()
                 + 4
                 + usize::from(spec.color_hint.is_some()) * 2
                 + usize::from(spec.shortcut.is_some()) * 2;
@@ -1685,7 +1685,11 @@ fn render_context_menu(
             if let Some(c) = spec.shortcut {
                 spans.push(ratatui::text::Span::styled(
                     format!("{c} "),
-                    base.fg(theme.menu_shortcut_color.unwrap_or(theme.grid_color)),
+                    if is_selected {
+                        base
+                    } else {
+                        base.fg(theme.menu_shortcut_color.unwrap_or(theme.grid_color))
+                    },
                 ));
             }
             ListItem::new(ratatui::text::Line::from(spans))
