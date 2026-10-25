@@ -2,6 +2,17 @@
 
 All notable changes to graf are documented in this file.
 
+## [1.1.2] - 2026-10-25
+
+### CI
+
+- Validate popup release against matching Clin adapters
+
+### Fixed
+
+- Measure menu labels in cells and preserve selection contrast
+- Bound graph menus and distinguish hover from selection
+- Package current Graf release archives for both AUR architectures (#28)
 ## [1.1.1] - 2026-10-21
 
 ### CI
@@ -26,6 +37,10 @@ All notable changes to graf are documented in this file.
 - Bump clap from 4.6.6 to 4.6.7
 - Bump toml from 1.1.5+spec-1.1.0 to 1.1.6+spec-1.1.0
 - Add flake.lock for reproducible builds
+
+### Release
+
+- V1.1.1
 ## [1.1.0] - 2026-09-10
 
 ### Added
