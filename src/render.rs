@@ -1646,6 +1646,8 @@ fn render_context_menu(
         .items
         .iter()
         .enumerate()
+        .skip(menu.visible_offset(rect.height))
+        .take(rect.height as usize)
         .map(|(i, spec)| {
             let is_selected = i == menu.selected;
             let base = if is_selected {
@@ -1672,7 +1674,7 @@ fn render_context_menu(
             let label = format!("{}  ", spec.label);
             spans.push(ratatui::text::Span::styled(label, base));
             // dynamic padding so shortcut right-aligns.
-            let content_len = spec.label.chars().count()
+            let content_len = ratatui::text::Line::from(spec.label).width()
                 + 4
                 + usize::from(spec.color_hint.is_some()) * 2
                 + usize::from(spec.shortcut.is_some()) * 2;
@@ -1683,7 +1685,11 @@ fn render_context_menu(
             if let Some(c) = spec.shortcut {
                 spans.push(ratatui::text::Span::styled(
                     format!("{c} "),
-                    base.fg(theme.menu_shortcut_color.unwrap_or(theme.grid_color)),
+                    if is_selected {
+                        base
+                    } else {
+                        base.fg(theme.menu_shortcut_color.unwrap_or(theme.grid_color))
+                    },
                 ));
             }
             ListItem::new(ratatui::text::Line::from(spans))
@@ -1705,18 +1711,13 @@ fn render_context_menu(
         && row >= rect.y
         && row < rect.y + rect.height
     {
-        let idx = (row - rect.y) as usize;
+        let idx = menu.visible_offset(rect.height) + (row - rect.y) as usize;
         if idx < menu.items.len() && idx != menu.selected {
             let hover_rect = Rect::new(rect.x, row, rect.width, 1);
             let buf = frame.buffer_mut();
             for c in hover_rect.left()..hover_rect.right() {
                 if let Some(cell) = buf.cell_mut((c, row)) {
-                    if let Some(hbg) = theme.highlight_bg {
-                        cell.set_bg(hbg);
-                    }
-                    if let Some(hfg) = theme.highlight_fg {
-                        cell.set_fg(hfg);
-                    }
+                    cell.set_style(theme.menu_hover);
                 }
             }
         }
