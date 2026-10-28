@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use glob::glob;
+use glob::{Pattern, glob};
 
 #[derive(Debug, Clone)]
 pub struct FileData {
@@ -31,16 +31,19 @@ pub(crate) fn markdown_paths(
     base_dir: &Path,
     exclude_patterns: &[String],
 ) -> Vec<std::path::PathBuf> {
-    let excluded = resolve_exclude_set(base_dir, exclude_patterns);
+    let excluded: Vec<_> = exclude_patterns
+        .iter()
+        .filter_map(|p| Pattern::new(p.trim_end_matches('/')).ok())
+        .collect();
     let mut files = Vec::new();
 
     let patterns = ["**/*.md", "**/*.mdx"];
 
     for pattern in &patterns {
-        let full_pattern = base_dir.join(pattern).to_string_lossy().to_string();
+        let full_pattern = format!("{}/{pattern}", Pattern::escape(&base_dir.to_string_lossy()));
         if let Ok(paths) = glob(&full_pattern) {
             for entry in paths.flatten() {
-                if should_exclude(&entry, base_dir, exclude_patterns, &excluded) {
+                if should_exclude(&entry, base_dir, &excluded) {
                     continue;
                 }
                 files.push(entry);
@@ -52,36 +55,11 @@ pub(crate) fn markdown_paths(
     files
 }
 
-fn resolve_exclude_set(base_dir: &Path, patterns: &[String]) -> HashSet<std::path::PathBuf> {
-    let mut excluded = HashSet::new();
-    for pat in patterns {
-        if let Ok(paths) = glob(&base_dir.join(pat).to_string_lossy()) {
-            for path in paths.flatten() {
-                excluded.insert(path);
-            }
-        }
-    }
-    excluded
-}
-
-fn should_exclude(
-    path: &Path,
-    base: &Path,
-    patterns: &[String],
-    excluded: &HashSet<std::path::PathBuf>,
-) -> bool {
-    if excluded.contains(path) {
-        return true;
-    }
-    if let Ok(rel) = path.strip_prefix(base) {
-        let rel_str = rel.to_string_lossy();
-        for pat in patterns {
-            if rel_str.contains(pat) || rel_str.ends_with(pat) {
-                return true;
-            }
-        }
-    }
-    false
+fn should_exclude(path: &Path, base: &Path, patterns: &[Pattern]) -> bool {
+    path.strip_prefix(base).is_ok_and(|rel| {
+        rel.ancestors()
+            .any(|ancestor| patterns.iter().any(|p| p.matches_path(ancestor)))
+    })
 }
 
 fn parse_markdown_file(path: &Path, base: &Path) -> anyhow::Result<FileData> {
@@ -90,7 +68,7 @@ fn parse_markdown_file(path: &Path, base: &Path) -> anyhow::Result<FileData> {
         .strip_prefix(base)
         .unwrap_or(path)
         .to_string_lossy()
-        .to_string();
+        .replace('\\', "/");
 
     Ok(crate::document::parse_note(&content, &relative_path, &Default::default())?.data)
 }
@@ -122,4 +100,49 @@ pub fn resolve_links(files: &[FileData], exclude_tags: &[String]) -> HashMap<Str
     }
 
     links
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::test_support::Notebook as TestDir;
+
+    #[test]
+    fn scans_literal_root_and_excludes_directory_descendants() {
+        let temp = TestDir::new();
+        let root = temp.path().join("[notes]");
+        fs::create_dir_all(root.join("archive/deep")).unwrap();
+        fs::create_dir_all(root.join("private")).unwrap();
+        for path in [
+            "archive/deep/hidden.md",
+            "private/hidden.md",
+            "keep.md",
+            "first.mdx",
+        ] {
+            fs::write(root.join(path), "# Note\n").unwrap();
+        }
+        let files = scan_markdown_files(&root, &["archive/*".into(), "private/".into()], 0);
+        assert_eq!(
+            files
+                .iter()
+                .map(|f| f.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            ["first.mdx", "keep.md"]
+        );
+        assert_eq!(
+            scan_markdown_files(&root, &[], 1)[0].relative_path,
+            "archive/deep/hidden.md"
+        );
+    }
+
+    #[test]
+    fn unquoted_titles_preserve_spaces_and_ignore_comments() {
+        let note = crate::document::parse_note(
+            "---\ntitle: My Note # comment\n---\n",
+            "a.md",
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(note.data.title, "My Note");
+    }
 }

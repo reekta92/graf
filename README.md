@@ -54,7 +54,7 @@ https://github.com/user-attachments/assets/de06ffda-a1f6-4317-9cd2-f7a222c13f18
 
 **Configuration**
 
-- **3-layer override** — defaults → TOML config file (`~/.config/graf/config.toml`) → CLI arguments → `GRAF_*` environment variables.
+- **Override order** — defaults → TOML config file (`~/.config/graf/config.toml`) → CLI arguments → `GRAF_*` environment variables.
 - **11 built-in themes** — default, Tokyo Night, Catppuccin Mocha, One Dark, Gruvbox, Dracula, Nord, Rose Pine, Everforest, Kanagawa, Solarized.
 - **Hex color overrides** — per-element (`node_color`, `edge_color`, `label_color`, etc.) on top of any theme.
 - **Background modes** — `transparent` (passes through terminal transparency) or `solid` (theme background color).
@@ -108,7 +108,7 @@ graf
 
 `graf` recursively scans the current working directory for `*.md` and `*.mdx` files, resolves note links, then renders a force-directed graph in your terminal. Press `r` to rescan after external edits.
 
-Double-click a node or press `Enter` to open the linked file. The editor is read from the `EDITOR` environment variable (defaults to `vim`).
+Double-click the same node or press `Enter` to open the linked file. Paths resolve against the scanned directory, including when using `--dir`. The editor is read from the `EDITOR` environment variable (defaults to `vim`).
 
 ```bash
 EDITOR=nvim graf
@@ -129,13 +129,11 @@ EDITOR=nvim graf
 | `a` | Auto-fit view to all nodes |
 | `f` | Activate search |
 | `r` | Refresh file scan |
-| `Shift+M` | Toggle minimap |
-| `Shift+L` | Toggle legend |
+| `m` | Toggle minimap |
+| `Ctrl+L` | Toggle legend |
 | `Ctrl+R` | Reload config |
-| `Shift+M` | Toggle minimap |
-| `Shift+L` | Toggle legend |
-| `Shift+G` | Toggle grid |
-| `Shift+S` | Toggle status bar |
+| `Ctrl+G` | Toggle grid |
+| `Ctrl+S` | Toggle status bar |
 | `?` | Toggle help overlay |
 | `q` / `Esc` | Quit |
 
@@ -172,11 +170,13 @@ Press `f` to activate the search popup. Search matches against node titles, file
 
 Config file location: `~/.config/graf/config.toml`
 
-If the file doesn't exist, `graf` uses all defaults. Every setting is optional — only include the ones you want to override.
+If the file does not exist, `graf` creates the bundled default config. Every setting is optional — only include the ones you want to override. Reload errors retain the last valid settings; dismiss the error popup with a key, fix the file, then press Ctrl+R.
 
 ### Full example
 
 ```toml
+max_node = 500
+
 [visual]
 theme = "catppuccin-mocha"
 background = "transparent"
@@ -199,7 +199,6 @@ minimap_height = 12
 canvas_marker = "braille"
 node_shape = "circle"
 label_offset = 4.0
-grid_divisions = 10
 show_looking_glass = true
 looking_glass_width = 24
 looking_glass_height = 12
@@ -227,19 +226,16 @@ double_click_ms = 300
 zoom_factor = 1.15
 drag_sensitivity = 0.5
 auto_fit_padding = 1.4
-drag_scale = 200.0
 
 [display]
 show_status_bar = true
 status_format = "Files: {files} | Links: {links} | Selected: {selected}"
 border_style = "rounded"
-border_title = "graf"
 
 [filter]
 exclude_tags = ["draft", "private"]
 exclude_patterns = ["*.bak", "archive/*"]
 min_links = 0
-max_nodes = 500
 show_orphan = false
 [legend]
 position = "top_right"
@@ -250,7 +246,6 @@ max_results = 20
 max_visible = 10
 popup_width = 50
 popup_y = 3
-cursor_glyph = "▎"
 
 [editor]
 command = ""
@@ -279,7 +274,6 @@ command = ""
 | `minimap_marker` | string | `"braille"` | Minimap rendering marker: `"braille"`, `"halfblock"`, `"dot"` |
 | `node_shape` | string | `"circle"` | Node shape: `"circle"`, `"square"`, `"diamond"` |
 | `label_offset` | float | `4.0` | Distance between node edge and label |
-| `grid_divisions` | int | `10` | Number of grid lines per axis (2–50) |
 | `show_looking_glass` | bool | `true` | Show looking glass |
 | `looking_glass_width` | int | `24` | Looking glass width in columns |
 | `looking_glass_height` | int | `12` | Looking glass height in rows |
@@ -342,12 +336,12 @@ Controls the force-directed layout simulation.
 |-----|------|---------|-------------|
 | `ideal_distance` | float | `80.0` | Target distance between connected nodes |
 | `damping` | float | `0.95` | Velocity damping per step (lower = faster settling) |
-| `max_iterations` | int | `800` | Maximum simulation steps before stopping |
+| `max_iterations` | int | `800` | Maximum steps per reheat when cooling is enabled |
 | `gravity` | float | `0.01` | Center pull to prevent drift |
-| `cooling` | bool | `true` | Whether simulation cools down over time |
-| `prevent_overlapping` | bool | `true` | Prevent nodes from overlapping |
-| `timestep` | float | `0.016` | Simulation timestep (lower = smoother but slower) |
-| `thread_sleep_ms` | int | `16` | Milliseconds between simulation steps (~60fps) |
+| `cooling` | bool | `true` | Settle and stop updating after cooling or the iteration limit; `false` keeps updating |
+| `prevent_overlapping` | bool | `true` | Enable repulsive forces between nodes |
+| `timestep` | float | `0.016` | Simulation timestep (finite, positive; lower = smoother but slower) |
+| `thread_sleep_ms` | int | `16` | Minimum 1 ms between simulation ticks; auto mode uses at least 33 ms above 500 nodes |
 | `tick_rate` | string | `"auto"` | Tick rate mode: `"auto"` or `"fixed"` |
 
 ### `[interaction]`
@@ -355,10 +349,9 @@ Controls the force-directed layout simulation.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `double_click_ms` | int | `300` | Time window in milliseconds to register a double-click |
-| `zoom_factor` | float | `1.15` | Zoom multiplier per scroll or key press |
+| `zoom_factor` | float | `1.15` | Finite multiplier greater than 1 per scroll or key press |
 | `drag_sensitivity` | float | `0.5` | Mouse drag speed multiplier |
-| `auto_fit_padding` | float | `1.4` | Padding multiplier when auto-fitting view (higher = more zoomed out) |
-| `drag_scale` | float | `200.0` | Internal scaling factor for background drag panning |
+| `auto_fit_padding` | float | `1.4` | Finite padding multiplier, at least 1; auto-fit uses actual canvas dimensions |
 
 ### `[display]`
 
@@ -367,7 +360,6 @@ Controls the force-directed layout simulation.
 | `show_status_bar` | bool | `true` | Show the status bar at the bottom |
 | `status_format` | string | `"Files: {files} \| Links: {links} \| Selected: {selected}"` | Status bar text template. Variables: `{files}`, `{links}`, `{selected}`, `{date}`, `{time}`, `{size}`, `{ratio}` |
 | `border_style` | string | `"rounded"` | Border style: `"plain"`, `"rounded"`, `"double"`, `"thick"`, `"dashed"`, `"dot"` |
-| `border_title` | string | `"graf"` | Window title. Supports `{cwd}` variable (current directory name) |
 
 ### `[filter]`
 
@@ -375,9 +367,17 @@ Controls the force-directed layout simulation.
 |-----|------|---------|-------------|
 | `exclude_tags` | array | `[]` | Tags to exclude from the graph |
 | `exclude_patterns` | array | `[]` | Glob patterns for files to exclude |
-| `min_links` | int | `0` | Only show nodes with at least this many connections |
-| `max_nodes` | int | `500` | Maximum nodes to display (`0` = unlimited) |
+| `min_links` | int | `0` | Minimum connections among displayed nodes; low-degree nodes are removed until every remaining node meets the threshold |
 | `show_orphan` | bool | `false` | Whether to show orphan nodes |
+
+### Limits and compatibility
+
+`max_node` is a top-level integer (default `500`; `0` means unlimited).
+Legacy config-file `[filter].max_nodes` is migrated when loading the standalone app.
+The old `grid_divisions`, `drag_scale`, `border_title`, and `cursor_glyph` fields remain
+readable for compatibility but are inactive: the grid adapts to zoom, panning uses canvas
+size, the graph has no title border, and search highlights the cursor character.
+Their old environment overrides are no longer supported.
 
 ### `[legend]`
 
@@ -394,7 +394,6 @@ Controls the force-directed layout simulation.
 | `max_visible` | int | `10` | Maximum results visible without scrolling |
 | `popup_width` | int | `50` | Search popup width in columns |
 | `popup_y` | int | `3` | Vertical position of search popup from top |
-| `cursor_glyph` | string | `"▎"` | Cursor character in search input |
 
 ### `[editor]`
 
@@ -448,7 +447,7 @@ Options:
           Print help
 ```
 
-> CLI arguments override config file values, which override defaults.
+> Environment variables override CLI arguments, which override config file values, which override defaults. Invalid CLI values are rejected.
 
 - - -
 
@@ -520,7 +519,7 @@ Obsidian's [graph view](https://help.obsidian.md/Plugins/Graph+view) was the dir
 
 ### File scanning
 
-`graf` recursively indexes all `*.md` and `*.mdx` files in the selected directory, skipping `exclude_patterns`. It resolves links before applying the top-level `max_node` display limit (`0` means unlimited; legacy `filter.max_nodes` is migrated on load).
+`graf` starts at the current working directory and recursively collects all `*.md` and `*.mdx` files. Files matching patterns in `exclude_patterns` are skipped. All matching files are parsed before the graph applies top-level `max_node` (default 500, `0` means unlimited), keeping the most-connected notes and counting backlinks. Excluded directories also exclude their descendants.
 
 ### Link parsing
 
@@ -532,6 +531,11 @@ For each file, `graf` extracts:
 
 The document resolver maps destinations to relative file paths. The graph uses those paths as node identities, allowing duplicate display titles. Unresolved links are ignored; ambiguous links and unreadable or malformed notes produce warnings. A malformed note is skipped until corrected and rescanned.
 
+Concurrent graf saves to the same note are rejected. A crashed save can leave a
+`.note.md.graf-save` staging file; inspect it and ensure no save is active before removing it.
+Changes from external editors are checked before replacement, but strict transactions require
+all writers to share a lock.
+
 ### Color assignment
 
 - **Tag mode**: Each unique tag across all files is assigned a unique color using golden-ratio distributed HSL values across the full 360° hue spectrum. No two tags ever share the same color.
@@ -540,7 +544,7 @@ The document resolver maps destinations to relative file paths. The graph uses t
 
 ### Physics
 
-A force-directed layout runs on a background thread at ~60fps using `fdg-sim`. Repulsive forces push all nodes apart, spring forces pull connected nodes together, and optional gravity prevents drift. The simulation auto-stops when total energy drops below a threshold.
+A force-directed layout runs on a background thread at ~60fps using `fdg-sim`. Repulsive forces push all nodes apart, spring forces pull connected nodes together, and optional gravity prevents drift. With cooling enabled, updates stop after cooling or `max_iterations`; dragging reheats the graph. Disabling cooling keeps updates running.
 
 - - -
 
@@ -551,7 +555,6 @@ A force-directed layout runs on a background thread at ~60fps using `fdg-sim`. R
 | `ratatui` | Terminal UI framework |
 | `crossterm` | Terminal raw mode, mouse capture, alternate screen |
 | `fdg-sim` | Force-directed graph simulation |
-| `petgraph` | Graph data structures |
 | `pulldown-cmark` | Markdown structure, wikilinks, and precise edit ranges |
 | `serde-saphyr` | YAML frontmatter parsing |
 | `percent-encoding` | Markdown path decoding and generation |
@@ -590,7 +593,7 @@ graf/
 
 ## Performance
 
-- Simulation runs at ~60fps (default `thread_sleep_ms = 16`)
-- Simulation auto-stops when total energy drops below `0.05 * node_count`
+- Default simulation ticks every 16 ms; auto mode uses at least 33 ms above 500 nodes
+- Cooling stops updates when alpha falls below `0.005` or the configured iteration limit is reached
 - Files are sorted alphabetically by path before graph construction
-- Max zoom: ~20x initial; Min zoom: 0.01 (hardcoded floor)
+- Zoom-in remains uncapped; filled shapes only sample the visible canvas. Zoom-out stops at 15% of the fitted zoom.

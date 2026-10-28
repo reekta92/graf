@@ -404,6 +404,9 @@ if let Some(action) = handle_graph_keys(&state, key_event, &settings, &keymap) {
 
 ### `handle_graph_mouse`
 
+Hosts with runtime overlay toggles should call `handle_graph_mouse_by_id_with_flags` with the same
+`FeatureFlags` used for `draw_graph_view`. It returns `MouseAction` with ID-aware connection targets. The original helpers read minimap visibility from settings.
+
 Processes mouse events (click, drag, scroll, double-click):
 
 ```rust
@@ -561,12 +564,32 @@ let (sx, sy) = viewport.world_to_screen(wx, wy, canvas_area);
 
 // Auto-fit all nodes into view
 let fitted = viewport.auto_fit_from_graph(simulation.get_graph(), 1.4 /* padding */);
+// Use the actual canvas dimensions when available (the legacy helper assumes 2:1).
+let fitted = viewport.auto_fit_from_graph_in_area(simulation.get_graph(), 1.4, canvas_area);
 
 // Hit-test: which node is at this world position?
 let hit = viewport.hit_test(wx, wy, &graph_state, &settings, canvas_area, max_link_count);
 ```
 
 - - -
+
+## Settings behavior
+
+`max_node` applies after title resolution and tag/orphan filtering. Ranking counts both
+outgoing links and backlinks. `filter.min_links` repeatedly removes nodes below the minimum
+displayed degree. Duplicate titles do not change the identity of a link's source note.
+
+`start_physics` uses `physics.timestep`, `thread_sleep_ms`, `gravity`, and
+`prevent_overlapping` (repulsion). With `cooling = true`, updates settle or stop at
+`max_iterations` and resume after reheating. With `cooling = false`, updates continue.
+Fixed tick mode honors `thread_sleep_ms`; auto mode uses at least 33 ms above 500 nodes.
+The default initial placement span is independent of the iteration limit.
+
+After changing visual or legend settings, set `render_cache.topology_dirty` and
+`render_cache.minimap_dirty` so cached colors and legends are rebuilt.
+Legacy `filter.max_nodes`, `grid_divisions`, `drag_scale`, `border_title`, and
+`cursor_glyph` fields remain for source compatibility; use top-level `max_node` and
+the current viewport/grid/search behavior instead.
 
 ## Thread safety
 

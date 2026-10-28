@@ -327,7 +327,7 @@ fn draw_reload_notification(
 
     let popup_area = ratatui::layout::Rect::new(x, y, width, height);
 
-    let is_error = msg.starts_with("Config error");
+    let is_error = msg.starts_with("Config error") || msg.starts_with("File error");
     let fg = if is_error {
         ratatui::style::Color::Red
     } else {

@@ -79,7 +79,10 @@ impl GrafConfig {
                 self.visual.label_max_length
             ));
         }
-        if self.visual.node_size < 1.0 || self.visual.node_size > 5.0 {
+        if !self.visual.node_size.is_finite()
+            || self.visual.node_size < 1.0
+            || self.visual.node_size > 5.0
+        {
             errs.push(format!(
                 "visual.node_size must be 1.0-5.0, got {}",
                 self.visual.node_size
@@ -98,11 +101,35 @@ impl GrafConfig {
                 self.visual.edge_thickness
             ));
         }
-        if self.interaction.zoom_factor <= 0.0 {
+        if !self.interaction.zoom_factor.is_finite() || self.interaction.zoom_factor <= 1.0 {
             errs.push(format!(
-                "interaction.zoom_factor must be > 0, got {}",
+                "interaction.zoom_factor must be finite and > 1, got {}",
                 self.interaction.zoom_factor
             ));
+        }
+        for (name, value) in [
+            ("physics.ideal_distance", self.physics.ideal_distance),
+            ("physics.timestep", self.physics.timestep),
+        ] {
+            if !value.is_finite() || value <= 0.0 || !(value as f32).is_finite() {
+                errs.push(format!("{name} must be finite and > 0, got {value}"));
+            }
+        }
+        if !self.physics.damping.is_finite() || !(0.0..=1.0).contains(&self.physics.damping) {
+            errs.push("physics.damping must be finite and between 0 and 1".into());
+        }
+        if !self.physics.gravity.is_finite()
+            || self.physics.gravity < 0.0
+            || !(self.physics.gravity as f32).is_finite()
+        {
+            errs.push("physics.gravity must be finite and >= 0".into());
+        }
+        if self.physics.max_iterations == 0 || self.physics.thread_sleep_ms == 0 {
+            errs.push("physics.max_iterations and physics.thread_sleep_ms must be > 0".into());
+        }
+        if !self.interaction.auto_fit_padding.is_finite() || self.interaction.auto_fit_padding < 1.0
+        {
+            errs.push("interaction.auto_fit_padding must be finite and >= 1".into());
         }
         // Warn if legend and minimap would overlap in the same corner
         if self.visual.show_legend && self.visual.show_minimap {
@@ -187,7 +214,7 @@ impl GrafConfig {
         (config, errors)
     }
 
-    fn apply_env_overrides(&mut self) {
+    pub(crate) fn apply_env_overrides(&mut self) {
         use std::env;
         macro_rules! apply_enum {
             ($var:expr, $field:expr) => {
@@ -250,7 +277,6 @@ impl GrafConfig {
         apply_enum!("VISUAL_MINIMAP_MARKER", self.visual.minimap_marker);
         apply_enum!("VISUAL_NODE_SHAPE", self.visual.node_shape);
         apply_val!("VISUAL_LABEL_OFFSET", self.visual.label_offset, f64);
-        apply_val!("VISUAL_GRID_DIVISIONS", self.visual.grid_divisions, usize);
         apply_val!("PHYSICS_IDEAL_DISTANCE", self.physics.ideal_distance, f64);
         apply_val!("PHYSICS_DAMPING", self.physics.damping, f32);
         apply_val!("PHYSICS_MAX_ITERATIONS", self.physics.max_iterations, usize);
@@ -279,7 +305,6 @@ impl GrafConfig {
             self.interaction.auto_fit_padding,
             f64
         );
-        apply_val!("INTERACTION_DRAG_SCALE", self.interaction.drag_scale, f64);
         apply_val!(
             "DISPLAY_SHOW_STATUS_BAR",
             self.display.show_status_bar,
@@ -287,9 +312,6 @@ impl GrafConfig {
         );
         if let Ok(s) = env::var("GRAF_DISPLAY_STATUS_FORMAT") {
             self.display.status_format = Some(s);
-        }
-        if let Ok(s) = env::var("GRAF_DISPLAY_BORDER_TITLE") {
-            self.display.border_title = s;
         }
         if let Ok(s) = env::var("GRAF_FILTER_EXCLUDE_TAGS") {
             self.filter.exclude_tags = s.split(',').map(|s| s.trim().to_string()).collect();
@@ -305,9 +327,6 @@ impl GrafConfig {
         apply_val!("SEARCH_MAX_VISIBLE", self.search.max_visible, usize);
         apply_val!("SEARCH_POPUP_WIDTH", self.search.popup_width, u16);
         apply_val!("SEARCH_POPUP_Y", self.search.popup_y, u16);
-        if let Ok(s) = env::var("GRAF_SEARCH_CURSOR_GLYPH") {
-            self.search.cursor_glyph = s;
-        }
         if let Ok(s) = env::var("GRAF_EDITOR_COMMAND") {
             self.editor.command = Some(s);
         }
@@ -377,5 +396,23 @@ mod tests {
         assert_eq!(restored.parsing, config.parsing);
         assert!(toml::from_str::<GrafConfig>("[parsing]\nlink_resolution = 'guess'").is_err());
         assert!(toml::from_str::<GrafConfig>("[parsing]\nhashtag = true").is_err());
+    }
+    #[test]
+    fn rejects_nonfinite_or_unusable_simulation_settings() {
+        let config: GrafConfig = toml::from_str("[physics]\ntimestep = nan\ngravity = -1\nmax_iterations = 0\nthread_sleep_ms = 0\n[interaction]\nzoom_factor = 1\nauto_fit_padding = 0").unwrap();
+        let errors = config.validate().join("\n");
+        for name in [
+            "timestep",
+            "gravity",
+            "max_iterations",
+            "thread_sleep_ms",
+            "zoom_factor",
+            "auto_fit_padding",
+        ] {
+            assert!(
+                errors.contains(name),
+                "missing validation for {name}: {errors}"
+            );
+        }
     }
 }

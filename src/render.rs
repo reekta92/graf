@@ -15,33 +15,7 @@ use crate::settings::{
 use crate::theme::ThemeColors;
 use crate::viewport::{Viewport, node_world_radius};
 
-fn truncate_ellipsis(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    if max == 0 {
-        return String::new();
-    }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    if end == 0 {
-        return String::new();
-    }
-    let mut end = end.saturating_sub(1);
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    if end == 0 {
-        return s
-            .chars()
-            .next()
-            .map(|c| format!("{c}…"))
-            .unwrap_or_default();
-    }
-    format!("{}…", &s[..end])
-}
+use crate::util::truncate;
 
 const LOCAL_TAG_PALETTE: &[Color] = &[
     Color::Red,
@@ -158,6 +132,7 @@ struct GraphNodesShape<'a> {
     /// World-units step between fill samples; a fraction of one canvas cell so
     /// filled shapes paint solid instead of speckled.
     fill_step: f64,
+    bounds: ([f64; 2], [f64; 2]),
 }
 
 /// Minimum node radius in text rows for a vault of `node_count` notes.
@@ -180,42 +155,48 @@ pub(crate) fn fill_step_for(cell_w: f64, cell_h: f64) -> f64 {
     cell_w.min(cell_h) / 4.0
 }
 
-/// Paints every canvas point inside `radius` for `shape`, sampling on a
-/// `step`-spaced grid; `color_for` picks the color per sample.
+/// Paints the visible portion of a shape on a step-spaced grid.
 fn paint_shape(
     painter: &mut Painter,
-    cx: f64,
-    cy: f64,
+    (cx, cy): (f64, f64),
     radius: f64,
     shape: NodeShape,
     step: f64,
-    color_for: impl Fn(f64, f64) -> Color,
+    (xb, yb): ([f64; 2], [f64; 2]),
+    color: Color,
 ) {
+    if !radius.is_finite() || !step.is_finite() || radius <= 0.0 || step <= 0.0 {
+        return;
+    }
     let step = step.max(1e-6);
     if step > radius {
         if let Some((px, py)) = painter.get_point(cx, cy) {
-            painter.paint(px, py, color_for(0.0, 0.0));
+            painter.paint(px, py, color);
         }
         return;
     }
-    let inside = |dx: f64, dy: f64| match shape {
-        NodeShape::Circle => dx * dx + dy * dy <= radius * radius,
-        NodeShape::Square => dx.abs() <= radius && dy.abs() <= radius,
-        NodeShape::Diamond => dx.abs() + dy.abs() <= radius,
-    };
-    let mut dy = -radius;
-    while dy <= radius {
-        let mut dx = -radius;
-        while dx <= radius {
-            if inside(dx, dy) {
-                let color = color_for(dx, dy);
-                if let Some((px, py)) = painter.get_point(cx + dx, cy + dy) {
-                    painter.paint(px, py, color);
-                }
+    let min_x = (-radius).max(xb[0] - cx);
+    let max_x = radius.min(xb[1] - cx);
+    let min_y = (-radius).max(yb[0] - cy);
+    let max_y = radius.min(yb[1] - cy);
+    if min_x > max_x || min_y > max_y {
+        return;
+    }
+    let cols = ((max_x - min_x) / step).floor() as usize;
+    let rows = ((max_y - min_y) / step).floor() as usize;
+    for row in 0..=rows {
+        let dy = min_y + row as f64 * step;
+        for col in 0..=cols {
+            let dx = min_x + col as f64 * step;
+            let inside = match shape {
+                NodeShape::Circle => dx * dx + dy * dy <= radius * radius,
+                NodeShape::Square => dx.abs() <= radius && dy.abs() <= radius,
+                NodeShape::Diamond => dx.abs() + dy.abs() <= radius,
+            };
+            if inside && let Some((px, py)) = painter.get_point(cx + dx, cy + dy) {
+                painter.paint(px, py, color);
             }
-            dx += step;
         }
-        dy += step;
     }
 }
 
@@ -326,12 +307,12 @@ impl Shape for GraphNodesShape<'_> {
             if node.filled {
                 paint_shape(
                     painter,
-                    node.x,
-                    node.y,
+                    (node.x, node.y),
                     node.radius,
                     node.shape,
                     self.fill_step,
-                    |_, _| node.color,
+                    self.bounds,
+                    node.color,
                 );
             } else {
                 draw_outlined_shape(painter, node.x, node.y, node.radius, node.shape, node.color);
@@ -348,12 +329,12 @@ impl Shape for GraphNodesShape<'_> {
 
                     paint_shape(
                         painter,
-                        sx,
-                        sy,
+                        (sx, sy),
                         node.radius * 0.4,
                         node.shape,
                         self.fill_step,
-                        |_, _| sat_color,
+                        self.bounds,
+                        sat_color,
                     );
                 }
             }
@@ -418,6 +399,8 @@ pub struct RenderCache {
     pub folder_colors: HashMap<String, Color>,
     pub node_own_color: HashMap<NodeIndex, Color>,
     pub legend_data: Option<Vec<(String, Color)>>,
+    pub legend_built: bool,
+    pub canvas_area: Rect,
     pub max_link_count: usize,
 
     pub edges: Vec<EdgeData>,
@@ -450,6 +433,8 @@ impl RenderCache {
             folder_colors: HashMap::new(),
             node_own_color: HashMap::new(),
             legend_data: None,
+            legend_built: false,
+            canvas_area: Rect::new(0, 0, 80, 40),
             max_link_count: 0,
             edges: Vec::new(),
             nodes: Vec::new(),
@@ -548,18 +533,20 @@ impl RenderCache {
             } else {
                 let mut sorted: Vec<_> = items.iter().collect();
                 sorted.sort_by_key(|(t, _)| t.as_str());
-                sorted.truncate(10);
-                Some(sorted.into_iter().map(|(t, c)| (t.clone(), *c)).collect())
+                sorted.truncate(settings.legend.max_items);
+                (!sorted.is_empty())
+                    .then(|| sorted.into_iter().map(|(t, c)| (t.clone(), *c)).collect())
             }
         } else {
             None
         };
 
+        self.legend_built = show_legend;
         self.topology_dirty = false;
         self.label_texts.clear();
         for idx in graph.node_indices() {
             let node = &graph[idx];
-            let truncated = truncate_ellipsis(&node.data.title, settings.visual.label_max_length);
+            let truncated = truncate(&node.data.title, settings.visual.label_max_length);
             self.label_texts.insert(idx, truncated);
         }
         self.cached_label_max_length = settings.visual.label_max_length;
@@ -800,8 +787,7 @@ impl RenderCache {
             self.label_texts.clear();
             for idx in graph.node_indices() {
                 let node = &graph[idx];
-                let truncated =
-                    truncate_ellipsis(&node.data.title, settings.visual.label_max_length);
+                let truncated = truncate(&node.data.title, settings.visual.label_max_length);
                 self.label_texts.insert(idx, truncated);
             }
             self.cached_label_max_length = settings.visual.label_max_length;
@@ -884,6 +870,9 @@ pub fn draw_graph_view(
     flags: &FeatureFlags,
 ) {
     let canvas_area = canvas_area(area, flags.show_status_bar);
+    if canvas_area.is_empty() {
+        return;
+    }
     let aspect = canvas_area.width as f64 / canvas_area.height as f64;
     let viewport = &state.viewport;
     let colors = theme;
@@ -891,7 +880,8 @@ pub fn draw_graph_view(
 
     let mut cache = state.render_cache.lock();
 
-    if cache.topology_dirty || (flags.show_legend && cache.legend_data.is_none()) {
+    cache.canvas_area = canvas_area;
+    if cache.topology_dirty || (flags.show_legend && !cache.legend_built) {
         cache.rebuild_topology(graph, settings, colors, flags.show_legend);
     }
 
@@ -1016,6 +1006,7 @@ pub fn draw_graph_view(
             ctx.draw(&GraphNodesShape {
                 nodes: nodes_ref,
                 fill_step,
+                bounds: (x_bounds, y_bounds),
             });
             for (x, y, span) in &label_draws {
                 ctx.print(*x, *y, span.clone());
@@ -1049,9 +1040,9 @@ pub fn draw_graph_view(
             .map(|(t, _): &(String, ratatui::style::Color)| t.len())
             .max()
             .unwrap_or(0);
-        let legend_width = (max_len + 4) as u16;
-        let legend_height = (items.len() as u16).min(10) + 2;
-        let (legend_x, legend_y) = match LegendPosition::BottomRight {
+        let legend_width = (max_len + 4).min(canvas_area.width as usize) as u16;
+        let legend_height = (items.len().saturating_add(2)).min(canvas_area.height as usize) as u16;
+        let (legend_x, legend_y) = match settings.legend.position {
             LegendPosition::TopLeft => (canvas_area.x, canvas_area.y),
             LegendPosition::TopRight => (
                 canvas_area.x + canvas_area.width.saturating_sub(legend_width),
@@ -1479,7 +1470,7 @@ pub fn draw_looking_glass(
         return;
     };
 
-    let title = truncate_ellipsis(&node.data.title, overlay.width.saturating_sub(4) as usize);
+    let title = truncate(&node.data.title, overlay.width.saturating_sub(4) as usize);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.minimap_border_color))
@@ -1559,6 +1550,7 @@ pub fn draw_looking_glass(
             ctx.draw(&GraphNodesShape {
                 nodes: std::slice::from_ref(&node_render),
                 fill_step: glass_fill_step,
+                bounds: ([-half_w, half_w], [-half_h, half_h]),
             });
         });
     frame.render_widget(canvas, glass_canvas_area);
@@ -1593,7 +1585,7 @@ pub fn draw_looking_glass(
             .iter()
             .take(tag_count)
             .map(|(tag, color)| {
-                let label = truncate_ellipsis(tag, inner.width.saturating_sub(2) as usize);
+                let label = truncate(tag, inner.width.saturating_sub(2) as usize);
                 ratatui::text::Line::from(ratatui::text::Span::styled(
                     format!("#{label}"),
                     Style::default().fg(*color),
@@ -1859,6 +1851,152 @@ mod tests {
     // Generous bounds covering all nodes in test graphs
     const TEST_X_BOUNDS: [f64; 2] = [-1000.0, 1000.0];
     const TEST_Y_BOUNDS: [f64; 2] = [-1000.0, 1000.0];
+
+    #[test]
+    fn filled_nodes_render_at_extreme_zoom() {
+        let mut settings = Settings::default();
+        settings.filter.show_orphan = true;
+        let specs = [crate::graph::NodeSpec {
+            id: "a".into(),
+            title: "A".into(),
+            tags: vec![],
+            folder: String::new(),
+            links: vec![],
+        }];
+        let mut state = GraphState::from_specs(&specs, &settings).unwrap();
+        for n in state.simulation.get_graph_mut().node_weights_mut() {
+            n.location.x = 0.0;
+            n.location.y = 0.0;
+        }
+        state.viewport.center_x = 0.0;
+        state.viewport.center_y = 0.0;
+        let flags = FeatureFlags {
+            show_legend: false,
+            grid: false,
+            show_minimap: false,
+            show_status_bar: false,
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        for zoom in [1_000_000.0, 1e20] {
+            state.viewport.zoom = zoom;
+            terminal
+                .draw(|f| {
+                    draw_graph_view(
+                        f,
+                        f.area(),
+                        &state,
+                        &settings,
+                        &ThemeColors::resolve(&settings),
+                        &flags,
+                    )
+                })
+                .unwrap();
+            assert!(
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .any(|c| c.symbol() != " ")
+            );
+        }
+    }
+
+    #[test]
+    fn hidden_single_group_legend_does_not_rebuild_topology() {
+        let mut settings = Settings::default();
+        settings.filter.show_orphan = true;
+        let state = GraphState::from_specs(
+            &[crate::graph::NodeSpec {
+                id: "a".into(),
+                title: "A".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec![],
+            }],
+            &settings,
+        )
+        .unwrap();
+        let flags = FeatureFlags {
+            show_legend: true,
+            grid: false,
+            show_minimap: false,
+            show_status_bar: false,
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let draw = |f: &mut ratatui::Frame| {
+            draw_graph_view(
+                f,
+                f.area(),
+                &state,
+                &settings,
+                &ThemeColors::resolve(&settings),
+                &flags,
+            )
+        };
+        terminal.draw(draw).unwrap();
+        let idx = state.simulation.get_graph().node_indices().next().unwrap();
+        assert!(state.render_cache.lock().legend_data.is_none());
+        state
+            .render_cache
+            .lock()
+            .label_texts
+            .insert(idx, "cached".into());
+        terminal.draw(draw).unwrap();
+        assert_eq!(state.render_cache.lock().label_texts[&idx], "cached");
+    }
+
+    #[test]
+    fn legend_honors_position_and_item_limit() {
+        let mut settings = Settings::default();
+        settings.filter.show_orphan = true;
+        settings.legend.max_items = 1;
+        settings.legend.position = LegendPosition::TopLeft;
+        let specs: Vec<_> = ["a", "b"]
+            .into_iter()
+            .map(|id| crate::graph::NodeSpec {
+                id: id.into(),
+                title: id.into(),
+                tags: vec![],
+                folder: id.into(),
+                links: vec![],
+            })
+            .collect();
+        let state = GraphState::from_specs(&specs, &settings).unwrap();
+        let flags = FeatureFlags {
+            show_legend: true,
+            grid: false,
+            show_minimap: false,
+            show_status_bar: false,
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|f| {
+                draw_graph_view(
+                    f,
+                    f.area(),
+                    &state,
+                    &settings,
+                    &ThemeColors::resolve(&settings),
+                    &flags,
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            state
+                .render_cache
+                .lock()
+                .legend_data
+                .as_ref()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "┌");
+    }
 
     #[test]
     fn test_fill_labels() {
