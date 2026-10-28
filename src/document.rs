@@ -226,6 +226,7 @@ pub fn scan_notes(
 pub struct LinkResolver<'a> {
     paths: HashSet<&'a str>,
     stems: HashMap<String, Vec<&'a str>>,
+    suffixes: HashMap<String, Vec<&'a str>>,
     titles: HashMap<String, Vec<&'a str>>,
     mode: LinkResolution,
 }
@@ -235,12 +236,26 @@ impl<'a> LinkResolver<'a> {
         let mut resolver = Self {
             paths: HashSet::new(),
             stems: HashMap::new(),
+            suffixes: HashMap::new(),
             titles: HashMap::new(),
             mode,
         };
         for note in notes {
             let data = &note.data;
             resolver.paths.insert(&data.relative_path);
+            for (index, _) in data.relative_path.match_indices('/') {
+                let suffix = &data.relative_path[index + 1..];
+                resolver
+                    .suffixes
+                    .entry(suffix.to_string())
+                    .or_default()
+                    .push(&data.relative_path);
+                resolver
+                    .suffixes
+                    .entry(strip_extension(suffix).to_string())
+                    .or_default()
+                    .push(&data.relative_path);
+            }
             let stem = Path::new(&data.relative_path)
                 .file_stem()
                 .unwrap_or_default()
@@ -296,7 +311,10 @@ impl<'a> LinkResolver<'a> {
             candidates.extend(root_path);
         }
         for path in candidates {
-            let variants = [path.clone(), format!("{path}.md"), format!("{path}.mdx")];
+            if let Some(found) = self.paths.get(path.as_str()) {
+                return Ok(Some(found));
+            }
+            let variants = [format!("{path}.md"), format!("{path}.mdx")];
             let matches: Vec<_> = variants
                 .iter()
                 .filter_map(|p| self.paths.get(p.as_str()).copied())
@@ -306,17 +324,7 @@ impl<'a> LinkResolver<'a> {
             }
         }
         if link.wiki && !target.starts_with('.') && !target.starts_with('/') {
-            let suffix = format!("/{target}");
-            let matches: Vec<_> = self
-                .paths
-                .iter()
-                .copied()
-                .filter(|p| {
-                    let path = strip_extension(p);
-                    path.ends_with(&suffix) || p.ends_with(&suffix)
-                })
-                .collect();
-            if let Some(found) = unique(Some(&matches), target)? {
+            if explicit && let Some(found) = unique(self.suffixes.get(target), target)? {
                 return Ok(Some(found));
             }
             if !explicit
@@ -384,6 +392,188 @@ pub fn resolve_note_links(
         edges.insert(note.data.relative_path.clone(), targets);
     }
     (edges, errors)
+}
+
+/// Edit references by resolved identity, leaving unrelated markup verbatim.
+pub fn edit_connection(
+    content: &str,
+    source: &str,
+    target: &str,
+    notes: &[Note],
+    config: &ParsingConfig,
+    create: bool,
+) -> Result<String> {
+    anyhow::ensure!(source != target, "cannot connect a note to itself");
+    let resolver = LinkResolver::new(notes, config.link_resolution);
+    let parsed = parse_note(content, source, config)?;
+    let mut ranges = Vec::new();
+    for link in &parsed.links {
+        if resolver.resolve(source, link).ok().flatten() == Some(target) {
+            ranges.push(link.range.clone());
+        }
+    }
+    if create {
+        if !ranges.is_empty() {
+            return Ok(content.to_string());
+        }
+        let target_note = notes
+            .iter()
+            .find(|n| n.data.relative_path == target)
+            .context("target note no longer exists")?;
+        let title = &target_note.data.title;
+        let link = match config.link_format {
+            LinkFormat::Wiki => {
+                let title_link = NoteLink {
+                    destination: title.clone(),
+                    wiki: true,
+                    range: 0..0,
+                };
+                let safe = |s: &str| !s.contains(['#', '|', '[', ']', '\\', '\n', '\r', ':', '^']);
+                if config.link_resolution == LinkResolution::TitleFirst
+                    && safe(title)
+                    && resolver.resolve(source, &title_link).ok().flatten() == Some(target)
+                {
+                    format!("[[{title}]]")
+                } else {
+                    anyhow::ensure!(
+                        safe(target),
+                        "filename cannot be represented as a wikilink; choose parsing.link_format = markdown"
+                    );
+                    if safe(title) {
+                        format!("[[{target}|{title}]]")
+                    } else {
+                        format!("[[{target}]]")
+                    }
+                }
+            }
+            LinkFormat::Markdown => {
+                let parent: Vec<_> = source.split('/').collect();
+                let parent = &parent[..parent.len() - 1];
+                let parts: Vec<_> = target.split('/').collect();
+                let common = parent
+                    .iter()
+                    .zip(&parts)
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                let path = format!(
+                    "{}{}",
+                    "../".repeat(parent.len() - common),
+                    parts[common..].join("/")
+                );
+                const PATH: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+                    .remove(b'/')
+                    .remove(b'-')
+                    .remove(b'_')
+                    .remove(b'.')
+                    .remove(b'~');
+                let path = percent_encoding::utf8_percent_encode(&path, PATH);
+                let mut label = String::new();
+                for c in title.chars() {
+                    if c.is_ascii_punctuation() {
+                        label.push('\\');
+                    }
+                    label.push(c);
+                }
+                format!("[{label}]({path})")
+            }
+        };
+        let updated = crate::wikilink::append_link(content, &link);
+        // The generated syntax must round-trip through the same parser and resolver.
+        let generated = parse_note(&updated, source, config)?;
+        anyhow::ensure!(
+            generated
+                .links
+                .iter()
+                .any(|l| resolver.resolve(source, l).ok().flatten() == Some(target)),
+            "generated link does not resolve to the selected note"
+        );
+        return Ok(updated);
+    }
+    let mut updated = content.to_string();
+    for range in ranges.into_iter().rev() {
+        updated.replace_range(range, "");
+    }
+    Ok(updated)
+}
+
+/// Replace a note atomically, refusing paths outside the notebook and stale edits.
+pub fn save_note(base: &Path, id: &str, original: &str, updated: &str) -> Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let root = base.canonicalize()?;
+    let path = root.join(id).canonicalize()?;
+    anyhow::ensure!(
+        path.starts_with(&root),
+        "refusing to edit a note outside the notebook"
+    );
+    let permissions = std::fs::metadata(&path)?.permissions();
+    anyhow::ensure!(!permissions.readonly(), "note is read-only");
+    let temp = path.with_file_name(format!(
+        ".graf-{}-{}.tmp",
+        std::process::id(),
+        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temp)
+        .context("cannot create temporary note")?;
+    let result = (|| -> Result<()> {
+        file.write_all(updated.as_bytes())?;
+        file.sync_all()?;
+        file.set_permissions(permissions)?;
+        anyhow::ensure!(
+            std::fs::read_to_string(&path)? == original,
+            "note changed on disk; refresh and retry"
+        );
+        std::fs::rename(&temp, &path).context("cannot replace note")?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    pub struct Notebook(pub PathBuf);
+    impl Notebook {
+        pub fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("development/scratch")
+                .join(format!(
+                    "note-compat-{}-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        pub fn write(&self, id: &str, content: &str) {
+            let path = self.0.join(id);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        }
+    }
+    impl Drop for Notebook {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -548,6 +738,151 @@ mod tests {
         assert_eq!(
             resolver.resolve("source.md", &link("x/a", true)).unwrap(),
             Some("x/a.md")
+        );
+    }
+
+    #[test]
+    fn edits_roundtrip_both_formats_with_duplicate_titles() {
+        let notes = [
+            note("source.md", "# Source\nBody.\n"),
+            note("a.md", "# todo"),
+            note("b.md", "# todo"),
+        ];
+        for format in [LinkFormat::Wiki, LinkFormat::Markdown] {
+            for mode in [LinkResolution::TitleFirst, LinkResolution::FilenameFirst] {
+                let config = ParsingConfig {
+                    link_format: format,
+                    link_resolution: mode,
+                    ..Default::default()
+                };
+                let content = "# Source\nBody.\n";
+                let updated =
+                    edit_connection(content, "source.md", "a.md", &notes, &config, true).unwrap();
+                let parsed = parse_note(&updated, "source.md", &config).unwrap();
+                let resolver = LinkResolver::new(&notes, mode);
+                assert_eq!(parsed.links.len(), 1);
+                assert_eq!(
+                    resolver.resolve("source.md", &parsed.links[0]).unwrap(),
+                    Some("a.md")
+                );
+                assert_eq!(
+                    edit_connection(&updated, "source.md", "a.md", &notes, &config, true).unwrap(),
+                    updated
+                );
+                let removed =
+                    edit_connection(&updated, "source.md", "a.md", &notes, &config, false).unwrap();
+                assert!(
+                    parse_note(&removed, "source.md", &config)
+                        .unwrap()
+                        .links
+                        .is_empty()
+                );
+                assert!(removed.starts_with(content));
+            }
+        }
+    }
+
+    #[test]
+    fn deletion_preserves_unrelated_text_definitions_and_code_examples() {
+        let notes = [note("a.md", "# A"), note("b.md", "# B")];
+        let content =
+            "Before [[a|alias]] and [[a#Section]] [reference][id].\n[[b]] `[[a]]`\n\n[id]: a.md\n";
+        let removed = edit_connection(
+            content,
+            "source.md",
+            "a.md",
+            &notes,
+            &ParsingConfig::default(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(removed, "Before  and  .\n[[b]] `[[a]]`\n\n[id]: a.md\n");
+    }
+
+    #[test]
+    fn markdown_edits_encode_paths_and_escape_labels() {
+        let notes = [
+            note("x/source.md", "# Source"),
+            note("other/a #b.md", "---\ntitle: 'A [label] *bold*'\n---\n"),
+        ];
+        let config = ParsingConfig {
+            link_format: LinkFormat::Markdown,
+            ..Default::default()
+        };
+        let updated = edit_connection(
+            "# Source\n",
+            "x/source.md",
+            "other/a #b.md",
+            &notes,
+            &config,
+            true,
+        )
+        .unwrap();
+        assert!(updated.contains("[A \\[label\\] \\*bold\\*](../other/a%20%23b.md)"));
+    }
+
+    #[test]
+    fn creation_ignores_links_sections_inside_code() {
+        let notes = [note("a.md", "# A")];
+        let content = "```md\n## Links\n[[a]]\n```\n";
+        let updated = edit_connection(
+            content,
+            "source.md",
+            "a.md",
+            &notes,
+            &ParsingConfig::default(),
+            true,
+        )
+        .unwrap();
+        assert!(updated.starts_with(content));
+        assert_eq!(note("source.md", &updated).links.len(), 1);
+    }
+
+    #[test]
+    fn atomic_save_checks_staleness_and_preserves_permissions() {
+        let notebook = test_support::Notebook::new();
+        notebook.write("a.md", "original");
+        let original_permissions = std::fs::metadata(notebook.0.join("a.md"))
+            .unwrap()
+            .permissions();
+        save_note(&notebook.0, "a.md", "original", "updated").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(notebook.0.join("a.md")).unwrap(),
+            "updated"
+        );
+        assert_eq!(
+            std::fs::metadata(notebook.0.join("a.md"))
+                .unwrap()
+                .permissions(),
+            original_permissions
+        );
+        assert!(save_note(&notebook.0, "a.md", "original", "stale overwrite").is_err());
+        assert_eq!(
+            std::fs::read_to_string(notebook.0.join("a.md")).unwrap(),
+            "updated"
+        );
+        assert_eq!(std::fs::read_dir(&notebook.0).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_refuses_readonly_notes_and_symlinks_outside_notebook() {
+        let notebook = test_support::Notebook::new();
+        let outside = test_support::Notebook::new();
+        notebook.write("readonly.md", "read only");
+        let path = notebook.0.join("readonly.md");
+        let original = std::fs::metadata(&path).unwrap().permissions();
+        let mut readonly = original.clone();
+        readonly.set_readonly(true);
+        std::fs::set_permissions(&path, readonly).unwrap();
+        assert!(save_note(&notebook.0, "readonly.md", "read only", "bad").is_err());
+        std::fs::set_permissions(&path, original).unwrap();
+        outside.write("other.md", "outside");
+        std::os::unix::fs::symlink(outside.0.join("other.md"), notebook.0.join("link.md")).unwrap();
+        assert!(save_note(&notebook.0, "link.md", "outside", "bad").is_err());
+        assert_eq!(
+            std::fs::read_to_string(outside.0.join("other.md")).unwrap(),
+            "outside"
         );
     }
 }
