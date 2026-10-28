@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+mod document;
 pub mod graph;
 pub mod linker;
 pub mod settings;

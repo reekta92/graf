@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod config;
+mod document;
 // Engine modules are duplicated from the lib target; items unused by the bin
 // are part of the lib API surface.
 #[allow(dead_code)]
