@@ -105,7 +105,6 @@ enum EventAction {
 struct ReloadCtx<'a> {
     config_path: &'a Option<std::path::PathBuf>,
     cli: &'a cli::Cli,
-    cwd: &'a std::path::PathBuf,
 }
 
 fn dispatch_action(
@@ -131,47 +130,47 @@ fn dispatch_action(
             }
         }
         EventAction::ReloadConfig => {
-            let old_physics = config.physics.clone();
-            let old_filter = config.filter.clone();
+            reload_config(app_state, config, reload_ctx.config_path.as_ref(), reload_ctx.cli);
 
-            let (new_config, errors) =
-                config::GrafConfig::reload_from_path(reload_ctx.config_path.as_ref());
-            *config = new_config;
-            apply_cli_overrides(config, reload_ctx.cli);
-            let validation_errors = config.validate();
-
-            if errors.is_empty() && validation_errors.is_empty() {
-                app_state.config_reload_msg = Some("Config reloaded".to_string());
-                app_state.config_errors.clear();
-            } else {
-                let mut all_errs = errors;
-                all_errs.extend(validation_errors);
-                app_state.config_errors = all_errs.clone();
-                app_state.config_reload_msg =
-                    Some(format!("Config error: {}", all_errs.join("; ")));
-            }
-            app_state.config_reload_ttl = 60;
-
-            if config.physics != old_physics {
-                app_state.refresh_simulation(config);
-            }
-            if config.filter != old_filter {
-                let files = linker::scan_markdown_files(
-                    reload_ctx.cwd,
-                    &config.filter.exclude_patterns,
-                    config.max_node,
-                );
-                app_state.files = files;
-                app_state.refresh_simulation(config);
-            }
-
-            app_state.show_minimap = config.visual.show_minimap;
-            app_state.show_legend = config.visual.show_legend;
-            app_state.show_grid = config.visual.show_grid;
-            app_state.show_status_bar = config.display.show_status_bar;
         }
     }
     Ok(())
+}
+
+fn reload_config(
+    app_state: &mut app::AppState,
+    config: &mut config::GrafConfig,
+    path: Option<&std::path::PathBuf>,
+    cli: &cli::Cli,
+) {
+    let (mut loaded, mut errors) = config::GrafConfig::reload_from_path(path);
+    apply_cli_overrides(&mut loaded, cli);
+    errors.extend(loaded.validate());
+    app_state.config_reload_ttl = 180;
+    if !errors.is_empty() {
+        app_state.config_reload_msg = Some(format!("Config error: {}", errors.join("; ")));
+        app_state.config_errors = errors;
+        return;
+    }
+    let old = std::mem::replace(config, loaded);
+    app_state.config_errors.clear();
+    app_state.config_reload_msg = Some("Config reloaded".into());
+    if config.filter != old.filter || config.max_node != old.max_node {
+        app_state.rescan_files(config);
+    } else if config.physics != old.physics {
+        app_state.refresh_simulation(config);
+    } else if (config.visual != old.visual || config.legend != old.legend)
+        && let Some(state) = &app_state.graph_state
+    {
+        let guard = state.read();
+        let mut cache = guard.render_cache.lock();
+        cache.topology_dirty = true;
+        cache.minimap_dirty = true;
+    }
+    app_state.show_minimap = config.visual.show_minimap;
+    app_state.show_legend = config.visual.show_legend;
+    app_state.show_grid = config.visual.show_grid;
+    app_state.show_status_bar = config.display.show_status_bar;
 }
 
 fn handle_event(
@@ -182,6 +181,13 @@ fn handle_event(
 ) -> Result<Option<EventAction>> {
     match ev {
         Event::Key(key) => {
+            if !app_state.config_errors.is_empty() {
+                app_state.config_errors.clear();
+                if matches!(key.code, crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Esc) {
+                    return Ok(Some(EventAction::Quit));
+                }
+                return Ok(None);
+            }
             if app_state.show_help {
                 if key.code == crossterm::event::KeyCode::Esc
                     || key.code == crossterm::event::KeyCode::Char('?')
@@ -264,7 +270,7 @@ fn apply_graph_action(
         }
         GraphAction::OpenFile(path) => Some(EventAction::OpenFile(path)),
         GraphAction::Refresh => {
-            app_state.refresh_simulation(config);
+            app_state.rescan_files(config);
             None
         }
         GraphAction::ReloadConfig => Some(EventAction::ReloadConfig),
@@ -475,10 +481,8 @@ fn apply_connection(
 }
 
 fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
-    if let Some(ref theme) = cli.theme
-        && let Ok(t) = theme.parse()
-    {
-        config.visual.theme = t;
+    if let Some(value) = &cli.theme {
+        config.visual.theme = value.clone();
     }
     if let Some(max) = cli.max_nodes {
         config.max_node = max;
@@ -489,23 +493,17 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
     if let Some(ref tags) = cli.exclude_tags {
         config.filter.exclude_tags = tags.split(',').map(|s| s.trim().to_string()).collect();
     }
-    if let Some(ref mode) = cli.node_color_mode
-        && let Ok(m) = mode.parse()
-    {
-        config.visual.node_color_mode = m;
+    if let Some(value) = &cli.node_color_mode {
+        config.visual.node_color_mode = value.clone();
     }
-    if let Some(ref mode) = cli.edge_color_mode
-        && let Ok(m) = mode.parse()
-    {
-        config.visual.edge_color_mode = m;
+    if let Some(value) = &cli.edge_color_mode {
+        config.visual.edge_color_mode = value.clone();
     }
     if cli.labels {
         config.visual.label_mode = config::LabelMode::All;
     }
-    if let Some(ref mode) = cli.label_mode
-        && let Ok(m) = mode.parse()
-    {
-        config.visual.label_mode = m;
+    if let Some(value) = &cli.label_mode {
+        config.visual.label_mode = value.clone();
     }
     if cli.no_status {
         config.display.show_status_bar = false;
@@ -519,19 +517,16 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
     if cli.no_legend {
         config.visual.show_legend = false;
     }
-    if let Some(ref bg) = cli.background
-        && let Ok(b) = bg.parse()
-    {
-        config.visual.background = b;
+    if let Some(value) = &cli.background {
+        config.visual.background = value.clone();
     }
-    if let Some(ref style) = cli.border_style
-        && let Ok(s) = style.parse()
-    {
-        config.display.border_style = s;
+    if let Some(value) = &cli.border_style {
+        config.display.border_style = value.clone();
     }
     if let Some(ref editor) = cli.editor {
         config.editor.command = Some(editor.clone());
     }
+    config.apply_env_overrides();
 }
 
 fn main() -> Result<()> {
@@ -561,7 +556,7 @@ fn main() -> Result<()> {
     } else {
         std::env::current_dir().context("failed to get current directory")?
     };
-    let files = linker::scan_markdown_files(&cwd, &config.filter.exclude_patterns, config.max_node);
+    let files = linker::scan_markdown_files(&cwd, &config.filter.exclude_patterns, 0);
 
     if files.is_empty() {
         eprintln!("No markdown files found in {}", cwd.display());
@@ -575,7 +570,6 @@ fn main() -> Result<()> {
     let reload_ctx = ReloadCtx {
         config_path: &config_path,
         cli: &cli,
-        cwd: &cwd,
     };
 
     while running {
@@ -885,6 +879,71 @@ mod tests {
         config.editor.command = Some(editor.to_string_lossy().into_owned());
         open_file_in_editor(temp.path(), "note.md", &config).unwrap();
         assert_eq!(std::fs::read_to_string(marker).unwrap(), note.canonicalize().unwrap().to_string_lossy());
+    }
+
+    #[test]
+    fn refresh_rescans_and_reload_applies_limits_and_visuals() {
+        let temp = TestDir::new();
+        for (name, text) in [("a.md", "# A\n[[B]]\n"), ("b.md", "# B\n[[A]]\n")] {
+            std::fs::write(temp.path().join(name), text).unwrap();
+        }
+        let mut config = config::GrafConfig::default();
+        config.filter.show_orphan = true;
+        let mut app = app::AppState::new(&config, temp.path().into(), linker::scan_markdown_files(temp.path(), &[], 0), vec![]);
+        std::fs::write(temp.path().join("c.md"), "# C\n[[A]]\n").unwrap();
+        apply_graph_action(GraphAction::Refresh, &mut app, &config);
+        assert_eq!(app.files.len(), 3);
+        let cli = cli::Cli::try_parse_from(["graf"]).unwrap();
+        let path = temp.path().join("config.toml");
+        let mut new = config.clone();
+        new.max_node = 1;
+        std::fs::write(&path, toml::to_string(&new).unwrap()).unwrap();
+        reload_config(&mut app, &mut config, Some(&path), &cli);
+        assert_eq!(app.graph_state.as_ref().unwrap().read().simulation.get_graph().node_count(), 1);
+        let old_state = app.graph_state.as_ref().unwrap().clone();
+        old_state.read().render_cache.lock().topology_dirty = false;
+        new.visual.theme = settings::Theme::Dracula;
+        std::fs::write(&path, toml::to_string(&new).unwrap()).unwrap();
+        reload_config(&mut app, &mut config, Some(&path), &cli);
+        assert!(std::sync::Arc::ptr_eq(&old_state, app.graph_state.as_ref().unwrap()));
+        assert!(old_state.read().render_cache.lock().topology_dirty);
+        assert_eq!(config.visual.theme, settings::Theme::Dracula);
+        std::fs::write(&path, "invalid = [").unwrap();
+        reload_config(&mut app, &mut config, Some(&path), &cli);
+        assert_eq!(config.visual.theme, settings::Theme::Dracula);
+        assert!(!app.config_errors.is_empty());
+        app.shutdown();
+    }
+
+    #[test]
+    fn cli_rejects_invalid_settings_and_accepts_documented_themes() {
+        assert!(cli::Cli::try_parse_from(["graf", "--theme", "missing"]).is_err());
+        assert!(cli::Cli::try_parse_from(["graf", "--label-mode", "missing"]).is_err());
+        let cli = cli::Cli::try_parse_from(["graf", "--theme", "tokyo-night"]).unwrap();
+        assert_eq!(cli.theme, Some(settings::Theme::TokyoNight));
+        assert_eq!(toml::from_str::<config::GrafConfig>("[visual]\ntheme = 'catppuccin-mocha'").unwrap().visual.theme, settings::Theme::CatppuccinMocha);
+    }
+
+    #[test]
+    fn environment_overrides_cli() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::environment_overrides_cli_child"])
+            .env("GRAF_TEST_ENV_PRECEDENCE", "1")
+            .env("GRAF_VISUAL_THEME", "dracula")
+            .env("GRAF_FILTER_MAX_NODES", "7")
+            .env_remove("GRAF_MAX_NODE")
+            .output().unwrap();
+        assert!(output.status.success(), "{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[test]
+    fn environment_overrides_cli_child() {
+        if std::env::var_os("GRAF_TEST_ENV_PRECEDENCE").is_none() { return; }
+        let cli = cli::Cli::try_parse_from(["graf", "--theme", "onedark", "--max-nodes", "2"]).unwrap();
+        let mut config = config::GrafConfig::default();
+        apply_cli_overrides(&mut config, &cli);
+        assert_eq!(config.visual.theme, settings::Theme::Dracula);
+        assert_eq!(config.max_node, 7);
     }
 
     #[test]

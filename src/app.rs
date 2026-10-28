@@ -133,6 +133,11 @@ impl AppState {
         }
     }
 
+    pub fn rescan_files(&mut self, config: &GrafConfig) {
+        self.files = crate::linker::scan_markdown_files(&self.base_dir, &config.filter.exclude_patterns, 0);
+        self.refresh_simulation(config);
+    }
+
     pub fn refresh_simulation(&mut self, config: &GrafConfig) {
         if let Some(kill_tx) = self.graph_kill_tx.take() {
             let _ = kill_tx.send(());
@@ -142,6 +147,8 @@ impl AppState {
         let mut effective = config.clone();
         if self.focus_note_ids.is_some() {
             effective.filter.show_orphan = true;
+            effective.filter.min_links = 0;
+            effective.max_node = 0;
         }
         let files: Vec<FileData> = match &self.focus_note_ids {
             Some(ids) => self
@@ -157,8 +164,19 @@ impl AppState {
             .expect("Failed to build graph");
         let state = Arc::new(RwLock::new(graph_state));
         let kill_tx = crate::physics::start_physics(state.clone(), &effective);
+        let baseline = {
+            let guard = state.read();
+            (guard.viewport.center_x, guard.viewport.center_y, guard.viewport.zoom)
+        };
+        if self.focus_note_ids.is_some() {
+            let mode = self.graph_state.as_ref().and_then(|s| s.read().mode_banner)
+                .filter(|m| matches!(m, crate::graph::ModeBanner::LocalGraph | crate::graph::ModeBanner::GroupedGraph));
+            state.write().mode_banner = mode;
+        }
         self.graph_state = Some(state);
         self.graph_kill_tx = kill_tx;
+        self.auto_fit_baseline = Some(baseline);
+        self.graph_mouse_state = GraphMouseState::default();
         // Clear search state — old NodeIndex values are invalid in the new graph
         self.search_results.clear();
         self.search_selected = 0;

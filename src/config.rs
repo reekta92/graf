@@ -168,7 +168,7 @@ impl GrafConfig {
         (config, errors)
     }
 
-    fn apply_env_overrides(&mut self) {
+    pub(crate) fn apply_env_overrides(&mut self) {
         use std::env;
         macro_rules! apply_enum {
             ($var:expr, $field:expr) => {

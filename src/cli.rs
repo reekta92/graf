@@ -18,7 +18,7 @@ pub struct Cli {
 
     /// Theme preset to use
     #[arg(long)]
-    pub theme: Option<String>,
+    pub theme: Option<crate::settings::Theme>,
 
     /// Maximum number of nodes to display
     #[arg(long)]
@@ -34,15 +34,15 @@ pub struct Cli {
 
     /// Node color mode
     #[arg(long)]
-    pub node_color_mode: Option<String>,
+    pub node_color_mode: Option<crate::settings::NodeColorMode>,
 
     /// Edge color mode
     #[arg(long)]
-    pub edge_color_mode: Option<String>,
+    pub edge_color_mode: Option<crate::settings::EdgeColorMode>,
 
     /// Label display mode
     #[arg(long)]
-    pub label_mode: Option<String>,
+    pub label_mode: Option<crate::settings::LabelMode>,
 
     /// Show all labels
     #[arg(long)]
@@ -66,11 +66,11 @@ pub struct Cli {
 
     /// Background style
     #[arg(long)]
-    pub background: Option<String>,
+    pub background: Option<crate::settings::Background>,
 
     /// Border style for overlays
     #[arg(long)]
-    pub border_style: Option<String>,
+    pub border_style: Option<crate::settings::BorderStyle>,
 
     /// Editor command to open files
     #[arg(long)]

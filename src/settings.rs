@@ -36,12 +36,15 @@ impl std::fmt::Display for Background {
 pub enum Theme {
     #[default]
     Default,
+    #[serde(alias = "tokyo-night")]
     TokyoNight,
+    #[serde(alias = "catppuccin-mocha")]
     CatppuccinMocha,
     Onedark,
     Gruvbox,
     Dracula,
     Nord,
+    #[serde(alias = "rose-pine")]
     RosePine,
     Everforest,
     Kanagawa,
@@ -52,7 +55,7 @@ impl FromStr for Theme {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
+        match s.to_lowercase().replace('-', "_").as_str() {
             "default" => Ok(Theme::Default),
             "tokyo_night" | "tokyonight" => Ok(Theme::TokyoNight),
             "catppuccin_mocha" | "catppuccinmocha" => Ok(Theme::CatppuccinMocha),
