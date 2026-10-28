@@ -68,7 +68,7 @@ fn parse_markdown_file(path: &Path, base: &Path) -> anyhow::Result<FileData> {
         .strip_prefix(base)
         .unwrap_or(path)
         .to_string_lossy()
-        .to_string();
+        .replace('\\', "/");
 
     Ok(crate::document::parse_note(&content, &relative_path, &Default::default())?.data)
 }
