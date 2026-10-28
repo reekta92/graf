@@ -15,33 +15,7 @@ use crate::settings::{
 use crate::theme::ThemeColors;
 use crate::viewport::{Viewport, node_world_radius};
 
-fn truncate_ellipsis(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    if max == 0 {
-        return String::new();
-    }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    if end == 0 {
-        return String::new();
-    }
-    let mut end = end.saturating_sub(1);
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    if end == 0 {
-        return s
-            .chars()
-            .next()
-            .map(|c| format!("{c}…"))
-            .unwrap_or_default();
-    }
-    format!("{}…", &s[..end])
-}
+use crate::util::truncate;
 
 const LOCAL_TAG_PALETTE: &[Color] = &[
     Color::Red,
@@ -571,7 +545,7 @@ impl RenderCache {
         self.label_texts.clear();
         for idx in graph.node_indices() {
             let node = &graph[idx];
-            let truncated = truncate_ellipsis(&node.data.title, settings.visual.label_max_length);
+            let truncated = truncate(&node.data.title, settings.visual.label_max_length);
             self.label_texts.insert(idx, truncated);
         }
         self.cached_label_max_length = settings.visual.label_max_length;
@@ -813,7 +787,7 @@ impl RenderCache {
             for idx in graph.node_indices() {
                 let node = &graph[idx];
                 let truncated =
-                    truncate_ellipsis(&node.data.title, settings.visual.label_max_length);
+                    truncate(&node.data.title, settings.visual.label_max_length);
                 self.label_texts.insert(idx, truncated);
             }
             self.cached_label_max_length = settings.visual.label_max_length;
@@ -1494,7 +1468,7 @@ pub fn draw_looking_glass(
         return;
     };
 
-    let title = truncate_ellipsis(&node.data.title, overlay.width.saturating_sub(4) as usize);
+    let title = truncate(&node.data.title, overlay.width.saturating_sub(4) as usize);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(colors.minimap_border_color))
@@ -1609,7 +1583,7 @@ pub fn draw_looking_glass(
             .iter()
             .take(tag_count)
             .map(|(tag, color)| {
-                let label = truncate_ellipsis(tag, inner.width.saturating_sub(2) as usize);
+                let label = truncate(tag, inner.width.saturating_sub(2) as usize);
                 ratatui::text::Line::from(ratatui::text::Span::styled(
                     format!("#{label}"),
                     Style::default().fg(*color),

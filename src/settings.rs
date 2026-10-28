@@ -382,6 +382,7 @@ pub struct VisualConfig {
     #[serde(default)]
     pub colors: ColorOverrides,
     // Graf-only fields
+    /// Legacy compatibility field; the grid now adapts to zoom.
     pub grid_divisions: usize,
 }
 
@@ -460,6 +461,7 @@ pub struct InteractionConfig {
     pub drag_sensitivity: f64,
     // Graf-only fields
     pub double_click_ms: u64,
+    /// Legacy compatibility field; panning now uses canvas dimensions.
     pub drag_scale: f64,
     pub auto_fit_padding: f64,
 }
@@ -482,6 +484,7 @@ pub struct FilterConfig {
     #[serde(default)]
     pub exclude_tags: Vec<String>,
     pub min_links: usize,
+    /// Legacy compatibility field; use Settings::max_node.
     pub max_nodes: usize,
     #[serde(default)]
     pub show_orphan: bool,
@@ -498,6 +501,7 @@ pub struct SearchConfig {
     // Graf-only fields
     pub popup_width: u16,
     pub popup_y: u16,
+    /// Legacy compatibility field; search highlights the character under the cursor.
     pub cursor_glyph: String,
 }
 
@@ -562,6 +566,7 @@ pub struct DisplayConfig {
     #[serde(default)]
     pub border_style: BorderStyle,
     #[serde(default = "default_border_title")]
+    /// Legacy compatibility field; the graph canvas has no title border.
     pub border_title: String,
 }
 

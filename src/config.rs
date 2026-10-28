@@ -231,7 +231,6 @@ impl GrafConfig {
         apply_enum!("VISUAL_MINIMAP_MARKER", self.visual.minimap_marker);
         apply_enum!("VISUAL_NODE_SHAPE", self.visual.node_shape);
         apply_val!("VISUAL_LABEL_OFFSET", self.visual.label_offset, f64);
-        apply_val!("VISUAL_GRID_DIVISIONS", self.visual.grid_divisions, usize);
         apply_val!("PHYSICS_IDEAL_DISTANCE", self.physics.ideal_distance, f64);
         apply_val!("PHYSICS_DAMPING", self.physics.damping, f32);
         apply_val!("PHYSICS_MAX_ITERATIONS", self.physics.max_iterations, usize);
@@ -260,7 +259,6 @@ impl GrafConfig {
             self.interaction.auto_fit_padding,
             f64
         );
-        apply_val!("INTERACTION_DRAG_SCALE", self.interaction.drag_scale, f64);
         apply_val!(
             "DISPLAY_SHOW_STATUS_BAR",
             self.display.show_status_bar,
@@ -268,9 +266,6 @@ impl GrafConfig {
         );
         if let Ok(s) = env::var("GRAF_DISPLAY_STATUS_FORMAT") {
             self.display.status_format = Some(s);
-        }
-        if let Ok(s) = env::var("GRAF_DISPLAY_BORDER_TITLE") {
-            self.display.border_title = s;
         }
         if let Ok(s) = env::var("GRAF_FILTER_EXCLUDE_TAGS") {
             self.filter.exclude_tags = s.split(',').map(|s| s.trim().to_string()).collect();
@@ -286,9 +281,6 @@ impl GrafConfig {
         apply_val!("SEARCH_MAX_VISIBLE", self.search.max_visible, usize);
         apply_val!("SEARCH_POPUP_WIDTH", self.search.popup_width, u16);
         apply_val!("SEARCH_POPUP_Y", self.search.popup_y, u16);
-        if let Ok(s) = env::var("GRAF_SEARCH_CURSOR_GLYPH") {
-            self.search.cursor_glyph = s;
-        }
         if let Ok(s) = env::var("GRAF_EDITOR_COMMAND") {
             self.editor.command = Some(s);
         }

@@ -2,6 +2,7 @@ pub mod graph;
 pub mod linker;
 pub mod settings;
 pub mod theme;
+mod util;
 #[cfg(test)]
 mod test_support;
 
