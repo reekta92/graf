@@ -5,8 +5,27 @@ use std::path::PathBuf;
 
 use directories::ProjectDirs;
 
-// Type alias to use library Settings as GrafConfig
-pub type GrafConfig = crate::settings::Settings;
+/// Standalone document options stay outside the graph library's Settings API.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct GrafConfig {
+    #[serde(flatten)]
+    graph: crate::settings::Settings,
+    pub parsing: crate::document::ParsingConfig,
+}
+
+impl std::ops::Deref for GrafConfig {
+    type Target = crate::settings::Settings;
+    fn deref(&self) -> &Self::Target {
+        &self.graph
+    }
+}
+
+impl std::ops::DerefMut for GrafConfig {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.graph
+    }
+}
 
 impl GrafConfig {
     pub fn config_path() -> anyhow::Result<PathBuf> {
@@ -189,6 +208,26 @@ impl GrafConfig {
             };
         }
         apply_enum!("VISUAL_THEME", self.visual.theme);
+        if let Ok(value) = env::var("GRAF_PARSING_LINK_RESOLUTION") {
+            match value.as_str() {
+                "title_first" => {
+                    self.parsing.link_resolution = crate::document::LinkResolution::TitleFirst
+                }
+                "filename_first" => {
+                    self.parsing.link_resolution = crate::document::LinkResolution::FilenameFirst
+                }
+                _ => {}
+            }
+        }
+        if let Ok(value) = env::var("GRAF_PARSING_LINK_FORMAT") {
+            match value.as_str() {
+                "wiki" => self.parsing.link_format = crate::document::LinkFormat::Wiki,
+                "markdown" => self.parsing.link_format = crate::document::LinkFormat::Markdown,
+                _ => {}
+            }
+        }
+        apply_val!("PARSING_HASHTAGS", self.parsing.hashtags, bool);
+        apply_val!("PARSING_COLON_TAGS", self.parsing.colon_tags, bool);
         apply_enum!("VISUAL_BACKGROUND", self.visual.background);
         apply_enum!("VISUAL_NODE_COLOR_MODE", self.visual.node_color_mode);
         apply_enum!("VISUAL_EDGE_COLOR_MODE", self.visual.edge_color_mode);
@@ -306,4 +345,37 @@ fn migrate_toml(content: &str) -> String {
 
 fn generate_default_toml() -> &'static str {
     include_str!("default_config.toml")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::{LinkFormat, LinkResolution};
+
+    #[test]
+    fn standalone_options_preserve_graph_defaults_and_old_configs() {
+        let config: GrafConfig = toml::from_str("[visual]\ntheme = 'dracula'\n").unwrap();
+        assert_eq!(config.visual.theme, crate::settings::Theme::Dracula);
+        assert_eq!(config.parsing.link_resolution, LinkResolution::TitleFirst);
+        assert!(!config.parsing.hashtags && !config.parsing.colon_tags);
+        let config: GrafConfig = toml::from_str(generate_default_toml()).unwrap();
+        assert_eq!(config.visual.theme, crate::settings::Theme::Onedark);
+        assert_eq!(config.parsing.link_format, LinkFormat::Wiki);
+    }
+
+    #[test]
+    fn parsing_options_validate_and_roundtrip() {
+        let config: GrafConfig = toml::from_str("max_node = 20\n[parsing]\nlink_resolution = 'filename_first'\nlink_format = 'markdown'\nhashtags = true\ncolon_tags = true\n").unwrap();
+        assert_eq!(config.max_node, 20);
+        assert_eq!(
+            config.parsing.link_resolution,
+            LinkResolution::FilenameFirst
+        );
+        assert_eq!(config.parsing.link_format, LinkFormat::Markdown);
+        let serialized = toml::to_string(&config).unwrap();
+        let restored: GrafConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(restored.parsing, config.parsing);
+        assert!(toml::from_str::<GrafConfig>("[parsing]\nlink_resolution = 'guess'").is_err());
+        assert!(toml::from_str::<GrafConfig>("[parsing]\nhashtag = true").is_err());
+    }
 }
