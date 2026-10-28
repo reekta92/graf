@@ -12,6 +12,7 @@ pub mod render;
 pub mod viewport;
 pub use input::{
     GraphAction, GraphKeymap, GraphMouseState, apply_action, handle_graph_keys, handle_graph_mouse,
+    handle_graph_mouse_with_flags,
 };
 pub use physics::{simulation_step, start_physics};
 pub use render::{

@@ -209,13 +209,18 @@ fn handle_event(
                 return Ok(None);
             }
             if let Some(graph_state) = &app_state.graph_state
-                && let Some(action) = crate::input::handle_graph_mouse(
+                && let Some(action) = crate::input::handle_graph_mouse_with_flags(
                     graph_state,
                     mouse_event,
                     frame_area(guard)?,
                     &mut app_state.graph_mouse_state,
                     config,
-                    app_state.show_status_bar,
+                    &render::FeatureFlags {
+                        show_minimap: app_state.show_minimap,
+                        show_legend: app_state.show_legend,
+                        grid: app_state.show_grid,
+                        show_status_bar: app_state.show_status_bar,
+                    },
                 )
             {
                 return Ok(apply_graph_action(action, app_state, config));

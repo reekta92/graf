@@ -375,6 +375,9 @@ if let Some(action) = handle_graph_keys(&state, key_event, &settings, &keymap) {
 
 ### `handle_graph_mouse`
 
+Hosts with runtime overlay toggles should call `handle_graph_mouse_with_flags` with the same
+`FeatureFlags` used for `draw_graph_view`. The original helper reads minimap visibility from settings.
+
 Processes mouse events (click, drag, scroll, double-click):
 
 ```rust

@@ -308,8 +308,26 @@ pub fn handle_graph_mouse(
     settings: &Settings,
     show_status_bar: bool,
 ) -> Option<GraphAction> {
-    let canvas = crate::render::canvas_area(area, show_status_bar);
-    let minimap_area = if settings.visual.show_minimap {
+    let flags = crate::render::FeatureFlags {
+        show_status_bar,
+        show_minimap: settings.visual.show_minimap,
+        show_legend: settings.visual.show_legend,
+        grid: settings.visual.show_grid,
+    };
+    handle_graph_mouse_with_flags(state, mouse_event, area, mouse_state, settings, &flags)
+}
+
+/// Handle mouse input using the same effective visibility flags as rendering.
+pub fn handle_graph_mouse_with_flags(
+    state: &Arc<RwLock<GraphState>>,
+    mouse_event: MouseEvent,
+    area: Rect,
+    mouse_state: &mut GraphMouseState,
+    settings: &Settings,
+    flags: &crate::render::FeatureFlags,
+) -> Option<GraphAction> {
+    let canvas = crate::render::canvas_area(area, flags.show_status_bar);
+    let minimap_area = if flags.show_minimap {
         Some(crate::render::compute_minimap_area(canvas, settings))
     } else {
         None
@@ -449,14 +467,14 @@ pub fn handle_graph_mouse(
                     guard.dragging_node = Some(node_idx);
                     mouse_state.drag_origin = Some((mouse_event.column, mouse_event.row));
                     mouse_state.is_panning = false;
-                    mouse_state.last_clicked_node = Some(node_idx);
-
                     if is_double_click
+                        && mouse_state.last_clicked_node == Some(node_idx)
                         && let Some(node) = guard.simulation.get_graph().node_weight(node_idx)
                     {
                         mouse_state.last_click_time = Some(Instant::now());
                         return Some(GraphAction::OpenFile(node.data.id.clone()));
                     }
+                    mouse_state.last_clicked_node = Some(node_idx);
                 } else {
                     let mut guard = state.write();
                     guard.selection.clear();
@@ -1002,4 +1020,41 @@ mod tests {
         assert!(action.is_none());
         assert!(state.read().context_menu.is_none());
     }
+    #[test]
+    fn hidden_minimap_does_not_capture_mouse_input() {
+        let state = setup_mock_graph_state(&[("a", &[])]);
+        let mut settings = Settings::default();
+        settings.visual.show_minimap = true;
+        let flags = crate::render::FeatureFlags { show_minimap: false, show_legend: false, grid: false, show_status_bar: false };
+        let area = Rect::new(0, 0, 80, 24);
+        let minimap = crate::render::compute_minimap_area(area, &settings);
+        let mut mouse = GraphMouseState::default();
+        handle_graph_mouse_with_flags(&state, MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left), column: minimap.x + 2,
+            row: minimap.y + 2, modifiers: KeyModifiers::NONE,
+        }, area, &mut mouse, &settings, &flags);
+        assert!(!mouse.is_minimap_dragging);
+    }
+
+    #[test]
+    fn double_click_requires_the_same_node() {
+        let state = setup_mock_graph_state(&[("a", &[]), ("b", &[])]);
+        let ids: Vec<_> = {
+            let mut g = state.write();
+            g.viewport = crate::viewport::Viewport::default();
+            for (i, n) in g.simulation.get_graph_mut().node_weights_mut().enumerate() {
+                n.location.x = if i == 0 { -20.0 } else { 20.0 };
+                n.location.y = 0.0;
+            }
+            g.simulation.get_graph().node_indices().collect()
+        };
+        let mut mouse = GraphMouseState { last_click_time: Some(Instant::now()), last_clicked_node: Some(ids[0]), ..Default::default() };
+        let settings = Settings::default();
+        let click = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 49, row: 12, modifiers: KeyModifiers::NONE };
+        let area = Rect::new(0, 0, 80, 24);
+        assert_eq!(handle_graph_mouse(&state, click, area, &mut mouse, &settings, false), None);
+        handle_graph_mouse(&state, MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), ..click }, area, &mut mouse, &settings, false);
+        assert_eq!(handle_graph_mouse(&state, click, area, &mut mouse, &settings, false), Some(GraphAction::OpenFile("b".into())));
+    }
+
 }
