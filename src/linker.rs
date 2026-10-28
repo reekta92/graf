@@ -3,17 +3,6 @@ use std::fs;
 use std::path::Path;
 
 use glob::{Pattern, glob};
-use regex::Regex;
-use std::sync::LazyLock;
-
-static WIKILINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]").unwrap());
-static FRONTMATTER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^---\s*\n(.*?)\n---\s*\n").unwrap());
-static TAGS_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^tags:\s*\[([^\]]*)\]").unwrap());
-static TITLE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?m)^title:[ \t]*(?:"([^"]*)"|'([^']*)'|([^\r\n]+))"#).unwrap());
 
 #[derive(Debug, Clone)]
 pub struct FileData {
@@ -28,6 +17,20 @@ pub fn scan_markdown_files(
     exclude_patterns: &[String],
     max_nodes: usize,
 ) -> Vec<FileData> {
+    let mut files: Vec<_> = markdown_paths(base_dir, exclude_patterns)
+        .into_iter()
+        .filter_map(|path| parse_markdown_file(&path, base_dir).ok())
+        .collect();
+    if max_nodes > 0 {
+        files.truncate(max_nodes);
+    }
+    files
+}
+
+pub(crate) fn markdown_paths(
+    base_dir: &Path,
+    exclude_patterns: &[String],
+) -> Vec<std::path::PathBuf> {
     let excluded: Vec<_> = exclude_patterns
         .iter()
         .filter_map(|p| Pattern::new(p.trim_end_matches('/')).ok())
@@ -43,18 +46,12 @@ pub fn scan_markdown_files(
                 if should_exclude(&entry, base_dir, &excluded) {
                     continue;
                 }
-                if let Ok(data) = parse_markdown_file(&entry, base_dir) {
-                    files.push(data);
-                }
+                files.push(entry);
             }
         }
     }
 
-    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-    if max_nodes > 0 && files.len() > max_nodes {
-        files.truncate(max_nodes);
-    }
-
+    files.sort();
     files
 }
 
@@ -73,69 +70,7 @@ fn parse_markdown_file(path: &Path, base: &Path) -> anyhow::Result<FileData> {
         .to_string_lossy()
         .to_string();
 
-    let tags = extract_tags(&content);
-    let wikilinks = extract_wikilinks(&content);
-    let title = extract_title(&content).unwrap_or_else(|| {
-        path.file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| relative_path.clone())
-    });
-
-    Ok(FileData {
-        relative_path,
-        title,
-        tags,
-        wikilinks,
-    })
-}
-
-pub(crate) fn extract_wikilinks(content: &str) -> Vec<String> {
-    WIKILINK_RE
-        .captures_iter(content)
-        .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
-        .collect()
-}
-
-fn extract_tags(content: &str) -> Vec<String> {
-    if let Some(fm) = FRONTMATTER_RE.captures(content) {
-        let fm_content = fm.get(1).unwrap().as_str();
-        if let Some(tags_match) = TAGS_RE.captures(fm_content)
-            && let Some(tags_str) = tags_match.get(1)
-        {
-            return tags_str
-                .as_str()
-                .split(',')
-                .map(|t| t.trim().trim_matches('"').trim_matches('\'').to_string())
-                .filter(|t| !t.is_empty())
-                .collect();
-        }
-    }
-    Vec::new()
-}
-
-fn extract_title(content: &str) -> Option<String> {
-    if let Some(fm) = FRONTMATTER_RE.captures(content) {
-        let fm_content = fm.get(1).unwrap().as_str();
-        if let Some(title_match) = TITLE_RE.captures(fm_content) {
-            if let Some(m) = title_match.get(1) {
-                return Some(m.as_str().to_string()).filter(|s| !s.trim().is_empty());
-            }
-            if let Some(m) = title_match.get(2) {
-                return Some(m.as_str().to_string()).filter(|s| !s.trim().is_empty());
-            }
-            if let Some(m) = title_match.get(3) {
-                let value = m.as_str().split(" #").next().unwrap_or_default().trim();
-                if !value.is_empty() && !value.starts_with('#') {
-                    return Some(value.to_string());
-                }
-            }
-        }
-    }
-
-    content
-        .lines()
-        .find(|l| l.starts_with("# "))
-        .map(|l| l[2..].trim().to_string())
+    Ok(crate::document::parse_note(&content, &relative_path, &Default::default())?.data)
 }
 
 pub fn resolve_links(files: &[FileData], exclude_tags: &[String]) -> HashMap<String, Vec<String>> {
@@ -170,7 +105,7 @@ pub fn resolve_links(files: &[FileData], exclude_tags: &[String]) -> HashMap<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::TestDir;
+    use crate::document::test_support::Notebook as TestDir;
 
     #[test]
     fn scans_literal_root_and_excludes_directory_descendants() {
@@ -202,13 +137,12 @@ mod tests {
 
     #[test]
     fn unquoted_titles_preserve_spaces_and_ignore_comments() {
-        assert_eq!(
-            extract_title("---\ntitle: My Note # comment\n---\n"),
-            Some("My Note".into())
-        );
-        assert_eq!(
-            extract_title("---\ntitle: 'My # Note'\n---\n"),
-            Some("My # Note".into())
-        );
+        let note = crate::document::parse_note(
+            "---\ntitle: My Note # comment\n---\n",
+            "a.md",
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(note.data.title, "My Note");
     }
 }

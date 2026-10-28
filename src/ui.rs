@@ -89,6 +89,18 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
 
     if let Some(ref msg) = state.config_reload_msg {
         draw_reload_notification(frame, area, msg, &colors);
+    } else if let Some(issue) = state
+        .scan_errors
+        .first()
+        .or_else(|| state.link_errors.first())
+    {
+        let count = state.scan_errors.len() + state.link_errors.len();
+        draw_reload_notification(
+            frame,
+            area,
+            &format!("{count} note issue(s): {issue}"),
+            &colors,
+        );
     }
 }
 

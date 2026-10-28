@@ -43,9 +43,10 @@ https://github.com/user-attachments/assets/de06ffda-a1f6-4317-9cd2-f7a222c13f18
 
 **Link Parsing**
 
-- **Wikilinks** — extracts `[[Title]]` and `[[Title|Display Text]]` patterns from file content.
-- **Frontmatter** — reads YAML `title:` and `tags: []` from `---`-delimited blocks.
-- **Title resolution** — fallback chain: frontmatter `title:` → first `# heading` → filename stem. Links are resolved by case-insensitive matching against titles.
+- **Links** — wikilinks (`[[target|label]]`), Markdown links (`[label](target.md)`), reference links, and note embeds. Links inside code and HTML comments are ignored.
+- **Optional frontmatter** — reads YAML titles and tag lists, including block lists. Notes without frontmatter work normally.
+- **Titles and filenames** — display title: frontmatter `title:` → first H1 → filename stem. Wikilinks prefer titles by default; filename-first resolution supports zk and Obsidian notebooks with ID filenames and duplicate titles.
+- **Inline tags** — independently opt in to `#tags` and `:colon:tags:` for coloring, search, and filtering.
 
 **Search**
 
@@ -105,7 +106,7 @@ cd ~/docs/my-wiki
 graf
 ```
 
-`graf` recursively scans the current working directory for `*.md` and `*.mdx` files, parses `[[wikilinks]]` and YAML frontmatter tags, then renders a force-directed graph in your terminal.
+`graf` recursively scans the current working directory for `*.md` and `*.mdx` files, resolves note links, then renders a force-directed graph in your terminal. Press `r` to rescan after external edits.
 
 Double-click the same node or press `Enter` to open the linked file. Paths resolve against the scanned directory, including when using `--dir`. The editor is read from the `EDITOR` environment variable (defaults to `vim`).
 
@@ -276,6 +277,39 @@ command = ""
 | `show_looking_glass` | bool | `true` | Show looking glass |
 | `looking_glass_width` | int | `24` | Looking glass width in columns |
 | `looking_glass_height` | int | `12` | Looking glass height in rows |
+
+### `[parsing]`
+
+Standalone settings; the library's existing title-based graph and input APIs keep their contracts.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `link_resolution` | `"title_first"` | Wikilink lookup: `"title_first"` or `"filename_first"` |
+| `link_format` | `"wiki"` | Format for newly created connections: `"wiki"` or `"markdown"`; both are always read |
+| `hashtags` | `false` | Read inline `#tags`, including nested tags such as `#work/rust` |
+| `colon_tags` | `false` | Read inline `:one:two:` tag chains |
+
+For zk or an Obsidian vault using ID filenames:
+
+```toml
+[parsing]
+link_resolution = "filename_first"
+link_format = "wiki" # Use "markdown" for zk's default link format.
+hashtags = true
+colon_tags = false
+```
+
+`ahj2.md` with `# A Note on Titles` displays that title and accepts `[[ahj2|A Note on Titles]]` or `[A Note on Titles](ahj2)`. No note conversion or frontmatter IDs are required. Environment overrides are `GRAF_PARSING_LINK_RESOLUTION`, `GRAF_PARSING_LINK_FORMAT`, `GRAF_PARSING_HASHTAGS`, and `GRAF_PARSING_COLON_TAGS`. Reload with `Ctrl+R` to reparse existing files.
+
+Explicit wikilink paths resolve from the notebook root; `./` and `../` paths resolve from the source note. Shortened paths and bare filenames must identify one note. Bare wikilinks try titles then filenames in `title_first`, and filenames then titles in `filename_first`. Titles and bare filenames match without case sensitivity; explicit paths preserve case. Ambiguous names produce a visible warning. Display filters, focused views, and node limits do not change resolution.
+
+Markdown destinations resolve relative to their source file and support percent encoding, reference definitions, and omitted `.md`/`.mdx` extensions. Heading and block fragments connect to the containing note; same-note fragments, external URLs, and non-note attachments do not create edges.
+
+Inline tags merge with frontmatter `tags` and `keywords`, retaining the first spelling and order. Code, HTML comments, escapes, URLs, and link labels are excluded. Tags may contain letters, numbers, `_`, `-`, and `/`; numeric-only tags are ignored. Inline tags can change which notes `exclude_tags` hides, so both options default to off.
+
+New connections use an unambiguous title or full filename path for wikilinks, and an encoded relative path for Markdown. Deleting a connection removes references in both directions, preserving unrelated text, reference definitions, and code examples. Saves preserve permissions, reject stale content and paths outside the notebook, and replace each edited file atomically. A two-note deletion can partially succeed if the second file cannot be saved; graf reports the error and rescans the actual files.
+
+This supports common file-based formats, not every tool-specific dialect: zk prefix/substring IDs and custom link templates, Bear multiword tags, Obsidian `%%` comments, and block-level graph nodes are not implemented. The graph still contains notes rather than headings or blocks.
 
 ### `[visual.colors]`
 
@@ -491,18 +525,11 @@ Obsidian's [graph view](https://help.obsidian.md/Plugins/Graph+view) was the dir
 
 For each file, `graf` extracts:
 
-1. **Wikilinks** — `[[Note Title]]` or `[[Note Title|Display Text]]` patterns from the file content
-2. **Title** — From YAML frontmatter (`title: "My Note"`) or the first `# heading`
-3. **Tags** — From YAML frontmatter (`tags: [tag1, tag2]`)
+1. **Links** — parsed Markdown and wikilink destinations, independent of display labels
+2. **Title** — optional YAML `title`, the first H1, or the filename stem
+3. **Tags** — YAML tag lists and enabled inline syntaxes
 
-Links are resolved by matching wikilink text (case-insensitive) against file titles. Unresolved links are silently ignored.
-
-### Connection edits
-
-Connection edits stage and synchronize the updated note before atomically replacing it.
-Read, write, permission, and path errors appear in the UI without changing the graph.
-Deleting one direction of a reciprocal link keeps the edge while the other link remains.
-Press `r` to rescan external edits, added files, or deleted files.
+The document resolver maps destinations to relative file paths. The graph uses those paths as node identities, allowing duplicate display titles. Unresolved links are ignored; ambiguous links and unreadable or malformed notes produce warnings. A malformed note is skipped until corrected and rescanned.
 
 Concurrent graf saves to the same note are rejected. A crashed save can leave a
 `.note.md.graf-save` staging file; inspect it and ensure no save is active before removing it.
@@ -528,7 +555,9 @@ A force-directed layout runs on a background thread at ~60fps using `fdg-sim`. R
 | `ratatui` | Terminal UI framework |
 | `crossterm` | Terminal raw mode, mouse capture, alternate screen |
 | `fdg-sim` | Force-directed graph simulation |
-| `regex` | Wikilink and frontmatter parsing |
+| `pulldown-cmark` | Markdown structure, wikilinks, and precise edit ranges |
+| `serde-saphyr` | YAML frontmatter parsing |
+| `percent-encoding` | Markdown path decoding and generation |
 | `toml` + `serde` | Configuration loading |
 | `clap` | CLI argument parsing |
 | `glob` | File discovery |
@@ -549,8 +578,9 @@ graf/
     ├── config.rs        # Config loading, validation
     ├── settings.rs      # Setting structs and defaults
     ├── theme.rs         # Theme palettes and builder
-    ├── linker.rs        # File scanning, wikilink extraction, frontmatter parsing
-    ├── wikilink.rs      # Wikilink regex extraction logic
+    ├── linker.rs        # File discovery and legacy title-based library adapters
+    ├── document.rs      # Markdown parsing, note resolution, and safe editing
+    ├── wikilink.rs      # Shared content-level link editing
     ├── ui.rs            # Help overlay, search popup, config error rendering
     ├── util.rs          # Shared utilities
     ├── graph.rs         # GraphState, ForceGraph construction

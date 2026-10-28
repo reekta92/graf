@@ -26,7 +26,7 @@ graf's library surface is organized into four layers:
 | Layer | Purpose | Key types |
 |-------|---------|-----------|
 | **Data** | Describe your nodes | `NodeSpec`, `FileData`, `scan_markdown_files`, `resolve_links` |
-| **Graph** | Build and query the force graph | `GraphState`, `build_graph`, `create_simulation`, `search_nodes` |
+| **Graph** | Build and query the force graph | `GraphState`, `build_graph`, `build_graph_resolved`, `create_simulation`, `search_nodes` |
 | **Physics** | Run the force-directed layout | `start_physics`, `simulation_step` |
 | **Rendering** | Draw the graph into a ratatui frame | `draw_graph_view`, `FeatureFlags`, `RenderCache` |
 | **Input** | Handle keyboard/mouse events | `handle_graph_keys`, `handle_graph_mouse`, `apply_action`, `GraphAction` |
@@ -221,6 +221,35 @@ let simulation = create_simulation(graph, &settings);
 let state = GraphState::new(simulation, Viewport::default());
 ```
 
+### Resolved note IDs
+
+`build_graph` and `GraphState::from_specs` retain case-insensitive title resolution for `NodeSpec.links`. Hosts with their own document resolver can instead supply source ID → target IDs:
+
+```rust
+use std::collections::HashMap;
+use graf::{GraphState, build_graph_resolved};
+
+let links = HashMap::from([("source.md".to_string(), vec!["ahj2.md".to_string()])]);
+let state = GraphState::from_resolved_specs(&specs, &links, &settings)?;
+// Or obtain just the force graph:
+let graph = build_graph_resolved(&specs, &links, &settings)?;
+```
+
+Node IDs must be unique; titles may repeat. The resolved map owns connectivity in these entry points; `NodeSpec.links` is ignored. Filtering and limits remove nodes and edges without re-resolving destinations. The standalone `[parsing]` options are not fields on library `Settings`.
+
+For connection editing, `handle_graph_mouse_by_id` accepts the same arguments as `handle_graph_mouse` and returns `Option<MouseAction>`:
+
+```rust
+match action {
+    graf::MouseAction::Graph(action) => { /* existing GraphAction dispatch */ }
+    graf::MouseAction::Connection { source_id, target_id, create } => {
+        // Host edits a reference to this exact target ID, even with duplicate titles.
+    }
+}
+```
+
+The existing `handle_graph_mouse` and `GraphAction::ConnectionEvent { target_title, .. }` retain their title-based contracts. Existing hosts, including clin, do not need to migrate.
+
 ### Key `GraphState` fields
 
 ```rust
@@ -375,8 +404,8 @@ if let Some(action) = handle_graph_keys(&state, key_event, &settings, &keymap) {
 
 ### `handle_graph_mouse`
 
-Hosts with runtime overlay toggles should call `handle_graph_mouse_with_flags` with the same
-`FeatureFlags` used for `draw_graph_view`. The original helper reads minimap visibility from settings.
+Hosts with runtime overlay toggles should call `handle_graph_mouse_by_id_with_flags` with the same
+`FeatureFlags` used for `draw_graph_view`. It returns `MouseAction` with ID-aware connection targets. The original helpers read minimap visibility from settings.
 
 Processes mouse events (click, drag, scroll, double-click):
 

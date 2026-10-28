@@ -4,6 +4,14 @@
 # max_node = 500
 # preview_enabled = false
 
+[parsing]
+# Wikilink lookup precedence: "title_first" or "filename_first" (zk/Obsidian).
+link_resolution = "title_first"
+# Format for newly created connections: "wiki" or "markdown".
+link_format = "wiki"
+hashtags = false
+colon_tags = false
+
 [visual]
 theme = "onedark"
 background = "transparent"

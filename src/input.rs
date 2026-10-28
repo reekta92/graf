@@ -103,12 +103,10 @@ pub fn apply_action(
         }
         AutoFit => {
             let padding = auto_fit_padding(settings);
-            let area = guard.render_cache.lock().canvas_area;
-            let vp = guard.viewport.clone().auto_fit_from_graph_in_area(
-                guard.simulation.get_graph(),
-                padding,
-                area,
-            );
+            let vp = guard
+                .viewport
+                .clone()
+                .auto_fit_from_graph(guard.simulation.get_graph(), padding);
             guard.viewport = vp;
             None
         }
@@ -301,6 +299,17 @@ pub struct GraphMouseState {
     pub is_middle_panning: bool,
 }
 
+/// Mouse actions for hosts that distinguish note IDs from display titles.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MouseAction {
+    Graph(GraphAction),
+    Connection {
+        source_id: String,
+        target_id: String,
+        create: bool,
+    },
+}
+
 pub fn handle_graph_mouse(
     state: &Arc<RwLock<GraphState>>,
     mouse_event: MouseEvent,
@@ -309,24 +318,65 @@ pub fn handle_graph_mouse(
     settings: &Settings,
     show_status_bar: bool,
 ) -> Option<GraphAction> {
+    match handle_graph_mouse_by_id(
+        state,
+        mouse_event,
+        area,
+        mouse_state,
+        settings,
+        show_status_bar,
+    )? {
+        MouseAction::Graph(action) => Some(action),
+        MouseAction::Connection {
+            source_id,
+            target_id,
+            create,
+        } => {
+            let guard = state.read();
+            let target_title = guard
+                .simulation
+                .get_graph()
+                .node_weights()
+                .find(|n| n.data.id == target_id)?
+                .data
+                .title
+                .clone();
+            Some(GraphAction::ConnectionEvent {
+                source_id,
+                target_title,
+                create,
+            })
+        }
+    }
+}
+
+/// ID-aware counterpart of [`handle_graph_mouse`]; existing hosts retain title events.
+pub fn handle_graph_mouse_by_id(
+    state: &Arc<RwLock<GraphState>>,
+    mouse_event: MouseEvent,
+    area: Rect,
+    mouse_state: &mut GraphMouseState,
+    settings: &Settings,
+    show_status_bar: bool,
+) -> Option<MouseAction> {
     let flags = crate::render::FeatureFlags {
         show_status_bar,
         show_minimap: settings.visual.show_minimap,
         show_legend: settings.visual.show_legend,
         grid: settings.visual.show_grid,
     };
-    handle_graph_mouse_with_flags(state, mouse_event, area, mouse_state, settings, &flags)
+    handle_graph_mouse_by_id_with_flags(state, mouse_event, area, mouse_state, settings, &flags)
 }
 
-/// Handle mouse input using the same effective visibility flags as rendering.
-pub fn handle_graph_mouse_with_flags(
+/// ID-aware mouse handling with the same runtime visibility flags as rendering.
+pub fn handle_graph_mouse_by_id_with_flags(
     state: &Arc<RwLock<GraphState>>,
     mouse_event: MouseEvent,
     area: Rect,
     mouse_state: &mut GraphMouseState,
     settings: &Settings,
     flags: &crate::render::FeatureFlags,
-) -> Option<GraphAction> {
+) -> Option<MouseAction> {
     let canvas = crate::render::canvas_area(area, flags.show_status_bar);
     let minimap_area = if flags.show_minimap {
         Some(crate::render::compute_minimap_area(canvas, settings))
@@ -374,14 +424,14 @@ pub fn handle_graph_mouse_with_flags(
                         && let Some(spec) = menu.items.get(idx)
                         && let Some(item) = menu_item_from_label(spec.label)
                     {
-                        return Some(GraphAction::MenuAction(item));
+                        return Some(MouseAction::Graph(GraphAction::MenuAction(item)));
                     }
                     return None;
                 }
             }
             // Connection mode: clicking a target completes (or cancels) the link.
             {
-                let mut conn_action: Option<GraphAction> = None;
+                let mut conn_action = None;
                 let mut in_conn_mode = false;
                 {
                     let guard = state.read();
@@ -404,15 +454,15 @@ pub fn handle_graph_mouse_with_flags(
                         if let (Some(src), Some(source_id), Some(tidx)) =
                             (src_idx, source_id, target_idx)
                             && src != tidx
-                            && let Some(target_title) = guard
+                            && let Some(target_id) = guard
                                 .simulation
                                 .get_graph()
                                 .node_weight(tidx)
-                                .map(|n| n.data.title.clone())
+                                .map(|n| n.data.id.clone())
                         {
-                            conn_action = Some(GraphAction::ConnectionEvent {
+                            conn_action = Some(MouseAction::Connection {
                                 source_id,
-                                target_title,
+                                target_id,
                                 create,
                             });
                         }
@@ -473,7 +523,9 @@ pub fn handle_graph_mouse_with_flags(
                         && let Some(node) = guard.simulation.get_graph().node_weight(node_idx)
                     {
                         mouse_state.last_click_time = Some(Instant::now());
-                        return Some(GraphAction::OpenFile(node.data.id.clone()));
+                        return Some(MouseAction::Graph(GraphAction::OpenFile(
+                            node.data.id.clone(),
+                        )));
                     }
                     mouse_state.last_clicked_node = Some(node_idx);
                 } else {
@@ -808,6 +860,51 @@ mod tests {
     }
     use parking_lot::RwLock;
 
+    #[test]
+    fn connection_click_keeps_target_id_and_legacy_title_events() {
+        let state = setup_mock_graph_state(&[("a.md", &["b.md"]), ("b.md", &[])]);
+        let mut settings = Settings::default();
+        settings.visual.show_minimap = false;
+        let area = Rect::new(0, 0, 100, 50);
+        let source = fdg_sim::petgraph::graph::NodeIndex::new(0);
+        let target = fdg_sim::petgraph::graph::NodeIndex::new(1);
+        {
+            let mut guard = state.write();
+            let canvas = crate::render::canvas_area(area, false);
+            let (x, y) = guard.viewport.screen_to_world(50, 25, canvas);
+            let graph = guard.simulation.get_graph_mut();
+            graph[source].location = fdg_sim::glam::Vec3::new(x as f32 + 1000.0, y as f32, 0.0);
+            graph[target].location = fdg_sim::glam::Vec3::new(x as f32, y as f32, 0.0);
+            graph[source].data.title = "todo".into();
+            graph[target].data.title = "todo".into();
+            guard.connection_source = Some(source);
+        }
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 25,
+            modifiers: KeyModifiers::NONE,
+        };
+        let mut mouse = GraphMouseState::default();
+        assert_eq!(
+            handle_graph_mouse_by_id(&state, click, area, &mut mouse, &settings, false),
+            Some(MouseAction::Connection {
+                source_id: "a.md".into(),
+                target_id: "b.md".into(),
+                create: true
+            })
+        );
+        state.write().connection_source = Some(source);
+        assert_eq!(
+            handle_graph_mouse(&state, click, area, &mut mouse, &settings, false),
+            Some(GraphAction::ConnectionEvent {
+                source_id: "a.md".into(),
+                target_title: "todo".into(),
+                create: true
+            })
+        );
+    }
+
     fn setup_mock_graph_state(nodes: &[(&str, &[&str])]) -> Arc<RwLock<GraphState>> {
         let specs: Vec<NodeSpec> = nodes
             .iter()
@@ -1035,7 +1132,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         let minimap = crate::render::compute_minimap_area(area, &settings);
         let mut mouse = GraphMouseState::default();
-        handle_graph_mouse_with_flags(
+        handle_graph_mouse_by_id_with_flags(
             &state,
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),

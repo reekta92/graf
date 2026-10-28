@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod config;
+mod document;
 // Engine modules are duplicated from the lib target; items unused by the bin
 // are part of the lib API surface.
 #[allow(dead_code)]
@@ -15,9 +16,6 @@ mod physics;
 mod render;
 #[allow(dead_code)]
 mod settings;
-mod storage;
-#[cfg(test)]
-mod test_support;
 #[allow(dead_code)]
 mod theme;
 mod ui;
@@ -127,6 +125,8 @@ fn dispatch_action(
             if let Err(error) = result {
                 app_state.config_reload_msg = Some(format!("File error: {error:#}"));
                 app_state.config_reload_ttl = 180;
+            } else {
+                app_state.rescan(config);
             }
         }
         EventAction::ReloadConfig => {
@@ -159,8 +159,11 @@ fn reload_config(
     let old = std::mem::replace(config, loaded);
     app_state.config_errors.clear();
     app_state.config_reload_msg = Some("Config reloaded".into());
-    if config.filter != old.filter || config.max_node != old.max_node {
-        app_state.rescan_files(config);
+    if config.filter != old.filter
+        || config.parsing != old.parsing
+        || config.max_node != old.max_node
+    {
+        app_state.rescan(config);
     } else if config.physics != old.physics {
         app_state.refresh_simulation(config);
     } else if (config.visual != old.visual || config.legend != old.legend)
@@ -222,7 +225,7 @@ fn handle_event(
                 return Ok(None);
             }
             if let Some(graph_state) = &app_state.graph_state
-                && let Some(action) = crate::input::handle_graph_mouse_with_flags(
+                && let Some(action) = crate::input::handle_graph_mouse_by_id_with_flags(
                     graph_state,
                     mouse_event,
                     frame_area(guard)?,
@@ -236,7 +239,24 @@ fn handle_event(
                     },
                 )
             {
-                return Ok(apply_graph_action(action, app_state, config));
+                return match action {
+                    crate::input::MouseAction::Graph(action) => {
+                        Ok(apply_graph_action(action, app_state, config))
+                    }
+                    crate::input::MouseAction::Connection {
+                        source_id,
+                        target_id,
+                        create,
+                    } => {
+                        if let Err(e) =
+                            app_state.edit_connection(config, &source_id, &target_id, create)
+                        {
+                            app_state.config_reload_msg = Some(format!("File error: {e:#}"));
+                            app_state.config_reload_ttl = 180;
+                        }
+                        Ok(None)
+                    }
+                };
             }
             Ok(None)
         }
@@ -277,7 +297,7 @@ fn apply_graph_action(
         }
         GraphAction::OpenFile(path) => Some(EventAction::OpenFile(path)),
         GraphAction::Refresh => {
-            app_state.rescan_files(config);
+            app_state.rescan(config);
             None
         }
         GraphAction::ReloadConfig => Some(EventAction::ReloadConfig),
@@ -285,17 +305,8 @@ fn apply_graph_action(
             execute_menu_action(app_state, config, item);
             None
         }
-        GraphAction::ConnectionEvent {
-            source_id,
-            target_title,
-            create,
-        } => {
-            if let Err(error) = apply_connection(app_state, &source_id, &target_title, create) {
-                app_state.config_reload_msg = Some(format!("File error: {error:#}"));
-                app_state.config_reload_ttl = 180;
-            }
-            None
-        }
+        // Standalone mouse handling uses ID-aware events; legacy events belong to hosts.
+        GraphAction::ConnectionEvent { .. } => None,
         GraphAction::ClearFocus => {
             app_state.exit_focus(config);
             None
@@ -401,109 +412,12 @@ fn execute_menu_action(
             };
             // graf bin has no note storage: drop the notes from the graph
             // view only (files on disk are untouched).
-            app_state.files.retain(|f| !ids.contains(&f.relative_path));
+            app_state
+                .files
+                .retain(|f| !ids.contains(&f.data.relative_path));
             app_state.refresh_simulation(config);
         }
     }
-}
-
-fn apply_connection(
-    app_state: &mut app::AppState,
-    source_id: &str,
-    target_title: &str,
-    create: bool,
-) -> Result<()> {
-    // Direction resolution for delete: if the source note does not link to the
-    // target but the target links to the source, edit the target instead.
-    let mut resolved_source = source_id.to_string();
-    let mut resolved_target = target_title.to_string();
-    if !create {
-        let source_has_link = app_state.files.iter().any(|f| {
-            f.relative_path == source_id
-                && f.wikilinks
-                    .iter()
-                    .any(|l| l.eq_ignore_ascii_case(target_title))
-        });
-        if !source_has_link {
-            let target_file = app_state
-                .files
-                .iter()
-                .find(|f| f.title.eq_ignore_ascii_case(target_title));
-            if let Some(target_file) = target_file {
-                let target_id = target_file.relative_path.clone();
-                if let Some(source_file) = app_state
-                    .files
-                    .iter()
-                    .find(|f| f.relative_path == source_id)
-                {
-                    let source_title = source_file.title.clone();
-                    if target_file
-                        .wikilinks
-                        .iter()
-                        .any(|l| l.eq_ignore_ascii_case(&source_title))
-                    {
-                        resolved_source = target_id;
-                        resolved_target = source_title;
-                    }
-                }
-            }
-        }
-    }
-
-    // 1. Write the wikilink edit to the file on disk.
-    let new_content = storage::edit_note(&app_state.base_dir, &resolved_source, |content| {
-        if create {
-            crate::wikilink::add_wikilink(content, &resolved_target)
-        } else {
-            crate::wikilink::remove_wikilink(content, &resolved_target)
-        }
-    })?;
-
-    // 2. Keep the file list in sync until the next full rescan.
-    if let Some(f) = app_state
-        .files
-        .iter_mut()
-        .find(|f| f.relative_path == resolved_source)
-    {
-        f.wikilinks = linker::extract_wikilinks(&new_content);
-    }
-    let source_title = app_state
-        .files
-        .iter()
-        .find(|f| f.relative_path == resolved_source)
-        .map(|f| f.title.as_str())
-        .unwrap_or_default();
-    let connected = app_state.files.iter().any(|f| {
-        f.relative_path == resolved_source
-            && f.wikilinks
-                .iter()
-                .any(|l| l.eq_ignore_ascii_case(&resolved_target))
-            || f.title.eq_ignore_ascii_case(&resolved_target)
-                && f.wikilinks
-                    .iter()
-                    .any(|l| l.eq_ignore_ascii_case(source_title))
-    });
-
-    // 3. Apply the edge to the live simulation (no rebuild: positions and
-    // viewport are preserved).
-    if let Some(gs) = app_state.graph_state.as_ref() {
-        let mut g = gs.write();
-        let graph = g.simulation.get_graph();
-        let src = graph
-            .node_indices()
-            .find(|&i| graph[i].data.id == resolved_source);
-        let tgt = graph
-            .node_indices()
-            .find(|&i| graph[i].data.title.eq_ignore_ascii_case(&resolved_target));
-        if let (Some(s), Some(t)) = (src, tgt) {
-            crate::graph::apply_connection_change(&mut g.simulation, s, t, connected);
-            g.reheat(0.4);
-            let mut cache = g.render_cache.lock();
-            cache.topology_dirty = true;
-            cache.minimap_dirty = true;
-        }
-    }
-    Ok(())
 }
 
 fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
@@ -586,15 +500,19 @@ fn main() -> Result<()> {
     } else {
         std::env::current_dir().context("failed to get current directory")?
     };
-    let files = linker::scan_markdown_files(&cwd, &config.filter.exclude_patterns, 0);
+    let (files, scan_errors) =
+        document::scan_notes(&cwd, &config.filter.exclude_patterns, &config.parsing);
 
     if files.is_empty() {
-        eprintln!("No markdown files found in {}", cwd.display());
+        eprintln!("No readable markdown files found in {}", cwd.display());
+        for error in &scan_errors {
+            eprintln!("{error}");
+        }
         std::process::exit(1);
     }
 
     let mut guard = TerminalGuard::new()?;
-    let mut app_state = app::AppState::new(&config, cwd.clone(), files, config_errors);
+    let mut app_state = app::AppState::new(&config, cwd.clone(), files, scan_errors, config_errors);
     let mut running = true;
 
     let reload_ctx = ReloadCtx {
@@ -672,7 +590,7 @@ fn open_file_in_editor(
     relative_path: &str,
     config: &config::GrafConfig,
 ) -> Result<()> {
-    let full_path = storage::note_path(base_dir, relative_path)?;
+    let full_path = document::note_path(base_dir, relative_path)?;
 
     let editor = if let Some(cmd) = &config.editor.command {
         if !cmd.is_empty() {
@@ -876,60 +794,7 @@ fn run_search(app_state: &mut app::AppState, config: &config::GrafConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::TestDir;
-
-    #[test]
-    fn connection_failures_leave_state_unchanged_and_reverse_links_keep_edges() {
-        let temp = TestDir::new();
-        std::fs::write(temp.path().join("a.md"), "# A\n[[B]]\n").unwrap();
-        std::fs::write(temp.path().join("b.md"), "# B\n[[A]]\n").unwrap();
-        let config = config::GrafConfig::default();
-        let files = linker::scan_markdown_files(temp.path(), &[], 0);
-        let mut app = app::AppState::new(&config, temp.path().into(), files, vec![]);
-        std::fs::write(temp.path().join(".a.md.graf-save"), "another save").unwrap();
-        assert!(apply_connection(&mut app, "a.md", "B", false).is_err());
-        assert_eq!(app.files[0].wikilinks, ["B"]);
-        assert_eq!(
-            app.graph_state
-                .as_ref()
-                .unwrap()
-                .read()
-                .simulation
-                .get_graph()
-                .edge_count(),
-            1
-        );
-        std::fs::remove_file(temp.path().join(".a.md.graf-save")).unwrap();
-        apply_connection(&mut app, "a.md", "B", false).unwrap();
-        assert!(app.files[0].wikilinks.is_empty());
-        assert_eq!(
-            app.graph_state
-                .as_ref()
-                .unwrap()
-                .read()
-                .simulation
-                .get_graph()
-                .edge_count(),
-            1
-        );
-        apply_connection(&mut app, "a.md", "B", false).unwrap();
-        assert_eq!(
-            app.graph_state
-                .as_ref()
-                .unwrap()
-                .read()
-                .simulation
-                .get_graph()
-                .edge_count(),
-            0
-        );
-        assert!(
-            !std::fs::read_to_string(temp.path().join("b.md"))
-                .unwrap()
-                .contains("[[A]]")
-        );
-        app.shutdown();
-    }
+    use crate::document::test_support::Notebook as TestDir;
 
     #[cfg(unix)]
     #[test]
@@ -961,15 +826,14 @@ mod tests {
         for (name, text) in [("a.md", "# A\n[[B]]\n"), ("b.md", "# B\n[[A]]\n")] {
             std::fs::write(temp.path().join(name), text).unwrap();
         }
-        let mut config = config::GrafConfig {
-            max_node: 2,
-            ..Default::default()
-        };
+        let mut config = config::GrafConfig::default();
+        config.max_node = 2;
         config.filter.show_orphan = true;
         let mut app = app::AppState::new(
             &config,
             temp.path().into(),
-            linker::scan_markdown_files(temp.path(), &[], 0),
+            document::scan_notes(temp.path(), &[], &config.parsing).0,
+            vec![],
             vec![],
         );
         std::fs::write(temp.path().join("c.md"), "# C\n[[A]]\n").unwrap();
@@ -1058,7 +922,7 @@ mod tests {
     #[test]
     fn delete_word_preserves_unicode_boundaries() {
         let config = config::GrafConfig::default();
-        let mut app = app::AppState::new(&config, Default::default(), vec![], vec![]);
+        let mut app = app::AppState::new(&config, Default::default(), vec![], vec![], vec![]);
         app.search_query = "one\u{3000}two".into();
         app.search_cursor = app.search_query.len();
         delete_word_back(&mut app);

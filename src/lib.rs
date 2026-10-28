@@ -1,8 +1,8 @@
+#[allow(dead_code)]
+mod document;
 pub mod graph;
 pub mod linker;
 pub mod settings;
-#[cfg(test)]
-mod test_support;
 pub mod theme;
 mod util;
 
@@ -12,8 +12,8 @@ pub mod physics;
 pub mod render;
 pub mod viewport;
 pub use input::{
-    GraphAction, GraphKeymap, GraphMouseState, apply_action, handle_graph_keys, handle_graph_mouse,
-    handle_graph_mouse_with_flags,
+    GraphAction, GraphKeymap, GraphMouseState, MouseAction, apply_action, handle_graph_keys,
+    handle_graph_mouse, handle_graph_mouse_by_id, handle_graph_mouse_by_id_with_flags,
 };
 pub use physics::{simulation_step, start_physics};
 pub use render::{
@@ -28,8 +28,8 @@ pub use settings::{
 pub mod wikilink;
 pub use graph::{
     ContextMenu, GraphNodeData, GraphState, MarqueeState, MenuItem, MenuItemSpec, ModeBanner,
-    NodeSpec, Selection, apply_connection_change, build_graph, create_simulation,
-    menu_item_from_label, menu_specs, search_nodes,
+    NodeSpec, Selection, apply_connection_change, build_graph, build_graph_resolved,
+    create_simulation, menu_item_from_label, menu_specs, search_nodes,
 };
 pub use linker::{FileData, resolve_links, scan_markdown_files};
 pub use theme::ThemeColors;

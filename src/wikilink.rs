@@ -9,22 +9,42 @@ pub fn add_wikilink(content: &str, target_title: &str) -> String {
     if content.contains(&link) {
         return content.to_string();
     }
+    append_link(content, &link)
+}
 
-    let mut content = content.to_string();
-    if let Some(idx) = content.find("\n## Links\n") {
-        content.insert_str(idx + "\n## Links\n".len(), &format!("{link}\n"));
-    } else if let Some(idx) = content.find("\n## Links") {
-        if idx + "\n## Links".len() == content.len() {
-            content.push_str(&format!("\n{link}\n"));
-        } else {
-            let ensure_newline = if content.ends_with('\n') { "" } else { "\n" };
-            content.push_str(&format!("{ensure_newline}\n## Links\n{link}\n"));
+pub(crate) fn append_link(content: &str, link: &str) -> String {
+    use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
+    let mut heading = None;
+    let mut insertion = None;
+    for (event, range) in Parser::new(content).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H2,
+                ..
+            }) => heading = Some(String::new()),
+            Event::Text(text) if heading.is_some() => heading.as_mut().unwrap().push_str(&text),
+            Event::End(TagEnd::Heading(HeadingLevel::H2))
+                if heading.take().is_some_and(|text| text.trim() == "Links") =>
+            {
+                insertion = Some(range.end);
+                break;
+            }
+            _ => {}
         }
-    } else {
-        let ensure_newline = if content.ends_with('\n') { "" } else { "\n" };
-        content.push_str(&format!("{ensure_newline}\n## Links\n{link}\n"));
     }
-    content
+    let mut updated = content.to_string();
+    if let Some(index) = insertion {
+        let newline = if content[..index].ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        updated.insert_str(index, &format!("{newline}{link}\n"));
+    } else {
+        let newline = if content.ends_with('\n') { "" } else { "\n" };
+        updated.push_str(&format!("{newline}\n## Links\n{link}\n"));
+    }
+    updated
 }
 
 /// Remove every `[[target…]]` link whose target name matches
