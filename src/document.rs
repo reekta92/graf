@@ -277,7 +277,13 @@ impl<'a> LinkResolver<'a> {
 
     pub fn resolve(&self, source: &str, link: &NoteLink) -> Result<Option<&'a str>> {
         let raw = link.destination.trim();
-        if raw.contains(':') || raw.starts_with("//") {
+        let scheme = raw.split_once(':').is_some_and(|(prefix, _)| {
+            prefix.starts_with(|c: char| c.is_ascii_alphabetic())
+                && prefix
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        });
+        if raw.contains("://") || raw.starts_with("//") || !link.wiki && scheme {
             return Ok(None);
         }
         let raw = raw.split('#').next().unwrap_or(raw);
@@ -731,6 +737,29 @@ mod tests {
             old.resolve("source.md", &link("./todo.md", true)).unwrap(),
             Some("todo.md")
         );
+    }
+
+    #[test]
+    fn colons_in_wikilink_titles_are_not_treated_as_external_urls() {
+        let notes = [
+            note("a.md", "# Research: Notes"),
+            note("mailto:note.md", "# Mail"),
+        ];
+        for mode in [LinkResolution::TitleFirst, LinkResolution::FilenameFirst] {
+            let resolver = LinkResolver::new(&notes, mode);
+            assert_eq!(
+                resolver
+                    .resolve("source.md", &link("Research: Notes", true))
+                    .unwrap(),
+                Some("a.md")
+            );
+            assert_eq!(
+                resolver
+                    .resolve("source.md", &link("mailto:note.md", false))
+                    .unwrap(),
+                None
+            );
+        }
     }
 
     #[test]
