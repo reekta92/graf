@@ -438,56 +438,42 @@ pub fn build_graph(
     settings: &Settings,
 ) -> anyhow::Result<ForceGraph<GraphNodeData, ()>> {
     let mut graph: ForceGraph<GraphNodeData, ()> = ForceGraph::default();
-    let mut title_to_index: HashMap<String, NodeIndex> = HashMap::new();
+    let mut id_to_index: HashMap<&str, NodeIndex> = HashMap::new();
+    let mut ids = HashSet::new();
+    anyhow::ensure!(nodes.iter().all(|n| ids.insert(&n.id)), "duplicate node ID");
 
     let show_orphan = settings.filter.show_orphan;
 
     // 1. Filter out nodes excluded by tags
-    let mut valid_nodes: Vec<&NodeSpec> = Vec::new();
-    for node in nodes {
-        if !settings.filter.exclude_tags.is_empty()
-            && node
-                .tags
-                .iter()
-                .any(|t| settings.filter.exclude_tags.contains(t))
-        {
-            continue;
-        }
-        valid_nodes.push(node);
-    }
+    let valid_nodes: Vec<_> = nodes.iter().filter(|n| {
+        !n.tags.iter().any(|t| settings.filter.exclude_tags.contains(t))
+    }).collect();
 
     // 2. Map valid titles for edge validation
-    let valid_titles: HashSet<String> =
-        valid_nodes.iter().map(|n| n.title.to_lowercase()).collect();
+    let valid_titles: HashMap<_, _> = valid_nodes.iter().map(|n| (n.title.to_lowercase(), *n)).collect();
 
     // 3. Find titles that participate in at least one valid edge
-    let mut has_valid_edge = HashSet::new();
-    if !show_orphan {
-        for node in &valid_nodes {
-            let source_title = node.title.to_lowercase();
-            for link in &node.links {
-                let target_title = link.to_lowercase();
-                if target_title != source_title && valid_titles.contains(&target_title) {
-                    has_valid_edge.insert(source_title.clone());
-                    has_valid_edge.insert(target_title);
-                }
+    let mut degrees: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for node in &valid_nodes {
+        for link in &node.links {
+            if let Some(target) = valid_titles.get(&link.to_lowercase())
+                && target.id != node.id
+            {
+                degrees.entry(&node.id).or_default().insert(&target.id);
+                degrees.entry(&target.id).or_default().insert(&node.id);
             }
         }
     }
 
     // 4. Collect final candidates (excluding orphans if requested)
-    let mut candidates: Vec<&NodeSpec> = Vec::new();
-    for node in valid_nodes {
-        if !show_orphan && !has_valid_edge.contains(&node.title.to_lowercase()) {
-            continue;
-        }
-        candidates.push(node);
-    }
+    let mut candidates: Vec<_> = valid_nodes.iter().copied().filter(|n| {
+        show_orphan || degrees.get(n.id.as_str()).is_some_and(|d| !d.is_empty())
+    }).collect();
 
     // Apply max_node cap: keep most-connected nodes
     let max_node = settings.max_node;
     if max_node > 0 && candidates.len() > max_node {
-        candidates.sort_by_key(|b| std::cmp::Reverse(b.links.len()));
+        candidates.sort_by_key(|n| std::cmp::Reverse(degrees.get(n.id.as_str()).map_or(0, HashSet::len)));
         candidates.truncate(max_node);
     }
 
@@ -502,41 +488,28 @@ pub fn build_graph(
         };
 
         let idx = graph.add_force_node(&node.title, data);
-        title_to_index.insert(node.title.to_lowercase(), idx);
+        id_to_index.insert(node.id.as_str(), idx);
     }
 
-    let mut has_final_edge = std::collections::HashSet::new();
-
-    for node in nodes {
-        let source_title = node.title.to_lowercase();
-
-        let source_idx = match title_to_index.get(&source_title) {
-            Some(&idx) => idx,
-            None => continue,
-        };
-
-        let mut seen_targets = std::collections::HashSet::new();
+    for node in &candidates {
+        let source_idx = id_to_index[node.id.as_str()];
+        let mut seen_targets = HashSet::new();
         for link in &node.links {
-            let target_lower = link.to_lowercase();
-            if let Some(&target_idx) = title_to_index.get(&target_lower)
+            if let Some(target) = valid_titles.get(&link.to_lowercase())
+                && let Some(&target_idx) = id_to_index.get(target.id.as_str())
                 && target_idx != source_idx
                 && seen_targets.insert(target_idx)
-                && graph.edges_connecting(source_idx, target_idx).count() == 0
+                && graph.find_edge(source_idx, target_idx).is_none()
             {
                 graph.add_edge(source_idx, target_idx, ());
-                has_final_edge.insert(source_idx);
-                has_final_edge.insert(target_idx);
             }
         }
     }
 
-    if !show_orphan {
-        let mut to_remove = Vec::new();
-        for idx in graph.node_indices() {
-            if !has_final_edge.contains(&idx) {
-                to_remove.push(idx);
-            }
-        }
+    let minimum = settings.filter.min_links.max(usize::from(!show_orphan));
+    loop {
+        let mut to_remove: Vec<_> = graph.node_indices().filter(|&i| graph.edges(i).count() < minimum).collect();
+        if to_remove.is_empty() { break; }
         to_remove.sort_unstable_by(|a, b| b.cmp(a));
         for idx in to_remove {
             graph.remove_node(idx);
@@ -1094,4 +1067,39 @@ mod tests {
         assert_eq!(menu.row_at(rect, rect.x, rect.bottom() - 1), Some(19));
         assert_eq!(menu.visible_offset(rect.height), 17);
     }
+    fn spec(id: &str, title: &str, links: &[&str]) -> NodeSpec {
+        NodeSpec { id: id.into(), title: title.into(), links: links.iter().map(|s| (*s).into()).collect(), tags: vec![], folder: String::new() }
+    }
+
+    #[test]
+    fn graph_limits_keep_connected_notes_and_count_backlinks() {
+        let mut settings = Settings::default();
+        settings.max_node = 2;
+        let graph = build_graph(&[spec("a", "A", &[]), spec("b", "B", &["C"]), spec("c", "C", &["B"])], &settings).unwrap();
+        assert_eq!(graph.node_count(), 2);
+        assert_eq!(graph.edge_count(), 1);
+        let graph = build_graph(&[spec("a", "A", &["Hub"]), spec("b", "B", &["Hub"]), spec("h", "Hub", &[])], &settings).unwrap();
+        assert!(graph.node_weights().any(|n| n.data.id == "h"));
+    }
+
+    #[test]
+    fn minimum_links_prunes_low_degree_nodes_until_stable() {
+        let mut settings = Settings::default();
+        settings.filter.min_links = 2;
+        let graph = build_graph(&[spec("a", "A", &["B", "C"]), spec("b", "B", &["C"]), spec("c", "C", &["D"]), spec("d", "D", &[])], &settings).unwrap();
+        assert_eq!(graph.node_count(), 3);
+        assert!(graph.node_weights().all(|n| n.data.link_count >= 2));
+    }
+
+    #[test]
+    fn duplicate_titles_do_not_redirect_source_edges() {
+        let mut settings = Settings::default();
+        settings.filter.show_orphan = true;
+        let graph = build_graph(&[spec("a", "Same", &["B"]), spec("z", "Same", &[]), spec("b", "B", &[])], &settings).unwrap();
+        let a = graph.node_indices().find(|&i| graph[i].data.id == "a").unwrap();
+        let z = graph.node_indices().find(|&i| graph[i].data.id == "z").unwrap();
+        assert_eq!(graph.edges(a).count(), 1);
+        assert_eq!(graph.edges(z).count(), 0);
+    }
+
 }
