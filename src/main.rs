@@ -574,7 +574,9 @@ fn main() -> Result<()> {
     };
 
     while running {
-        app_state.tick();
+        let area = render::canvas_area(frame_area(&guard)?, app_state.show_status_bar);
+        app_state.resize_view(area, &config);
+        app_state.tick(&config);
         guard.as_mut().draw(|frame| {
             ui::draw_ui(frame, &app_state, &config);
         })?;

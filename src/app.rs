@@ -68,7 +68,7 @@ impl AppState {
             let mut guard = state.write();
             let vp = guard
                 .viewport
-                .auto_fit_from_graph(guard.simulation.get_graph(), 1.4);
+                .auto_fit_from_graph(guard.simulation.get_graph(), config.interaction.auto_fit_padding);
             guard.viewport = vp;
             Some((
                 guard.viewport.center_x,
@@ -104,16 +104,31 @@ impl AppState {
 
     /// Per-frame: fit the viewport to the graph once physics settles, unless the
     /// user already moved the camera.
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, config: &GrafConfig) {
         if let (Some(baseline), Some(state)) = (self.auto_fit_baseline, &self.graph_state) {
             let mut guard = state.write();
             let vp = &guard.viewport;
             if (vp.center_x, vp.center_y, vp.zoom) != baseline {
                 self.auto_fit_baseline = None;
             } else if guard.is_settled {
-                let fitted = vp.auto_fit_from_graph(guard.simulation.get_graph(), 1.4);
+                let area = guard.render_cache.lock().canvas_area;
+                let fitted = vp.auto_fit_from_graph_in_area(guard.simulation.get_graph(), config.interaction.auto_fit_padding, area);
                 guard.viewport = fitted;
                 self.auto_fit_baseline = None;
+            }
+        }
+    }
+
+    pub fn resize_view(&mut self, area: ratatui::layout::Rect, config: &GrafConfig) {
+        if let (Some(baseline), Some(state)) = (self.auto_fit_baseline, &self.graph_state) {
+            let mut guard = state.write();
+            if guard.render_cache.lock().canvas_area != area
+                && (guard.viewport.center_x, guard.viewport.center_y, guard.viewport.zoom) == baseline
+            {
+                guard.viewport = guard.viewport.auto_fit_from_graph_in_area(
+                    guard.simulation.get_graph(), config.interaction.auto_fit_padding, area,
+                );
+                self.auto_fit_baseline = Some((guard.viewport.center_x, guard.viewport.center_y, guard.viewport.zoom));
             }
         }
     }

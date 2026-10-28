@@ -532,6 +532,8 @@ let (sx, sy) = viewport.world_to_screen(wx, wy, canvas_area);
 
 // Auto-fit all nodes into view
 let fitted = viewport.auto_fit_from_graph(simulation.get_graph(), 1.4 /* padding */);
+// Use the actual canvas dimensions when available (the legacy helper assumes 2:1).
+let fitted = viewport.auto_fit_from_graph_in_area(simulation.get_graph(), 1.4, canvas_area);
 
 // Hit-test: which node is at this world position?
 let hit = viewport.hit_test(wx, wy, &graph_state, &settings, canvas_area, max_link_count);

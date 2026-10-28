@@ -103,10 +103,11 @@ pub fn apply_action(
         }
         AutoFit => {
             let padding = auto_fit_padding(settings);
+            let area = guard.render_cache.lock().canvas_area;
             let vp = guard
                 .viewport
                 .clone()
-                .auto_fit_from_graph(guard.simulation.get_graph(), padding);
+                .auto_fit_from_graph_in_area(guard.simulation.get_graph(), padding, area);
             guard.viewport = vp;
             None
         }
