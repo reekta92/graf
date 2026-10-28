@@ -829,8 +829,9 @@ fn delete_word_back(app_state: &mut app::AppState) {
     let query = &app_state.search_query[..app_state.search_cursor];
     let trimmed = query.trim_end_matches(|c: char| c.is_whitespace());
     let cut_to = trimmed
-        .rfind(|c: char| c.is_whitespace())
-        .map(|i| i + 1)
+        .char_indices()
+        .rfind(|(_, c)| c.is_whitespace())
+        .map(|(i, c)| i + c.len_utf8())
         .unwrap_or(0);
     app_state
         .search_query
@@ -848,4 +849,22 @@ fn run_search(app_state: &mut app::AppState, config: &config::GrafConfig) {
         );
     }
     app_state.search_selected = 0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_word_preserves_unicode_boundaries() {
+        let config = config::GrafConfig::default();
+        let mut app = app::AppState::new(&config, Default::default(), vec![], vec![]);
+        app.search_query = "one\u{3000}two".into();
+        app.search_cursor = app.search_query.len();
+        delete_word_back(&mut app);
+        assert_eq!(app.search_query, "one\u{3000}");
+        assert_eq!(app.search_cursor, app.search_query.len());
+        delete_word_back(&mut app);
+        assert_eq!(app.search_query, "");
+    }
 }

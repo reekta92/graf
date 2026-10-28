@@ -750,13 +750,25 @@ impl<'de> serde::Deserialize<'de> for ColorOverrides {
 
 pub fn parse_hex_color(s: &str) -> Option<Color> {
     let s = s.strip_prefix('#')?;
-    if s.len() == 6 {
+    if s.len() == 6 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
         let r = u8::from_str_radix(&s[0..2], 16).ok()?;
         let g = u8::from_str_radix(&s[2..4], 16).ok()?;
         let b = u8::from_str_radix(&s[4..6], 16).ok()?;
         Some(Color::Rgb(r, g, b))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+
+    #[test]
+    fn hex_colors_reject_non_ascii_without_panicking() {
+        assert_eq!(parse_hex_color("#a€bc"), None);
+        assert_eq!(parse_hex_color("#12xy34"), None);
+        assert_eq!(parse_hex_color("#12abEF"), Some(Color::Rgb(18, 171, 239)));
     }
 }
 
