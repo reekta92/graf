@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use glob::glob;
+use glob::{Pattern, glob};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -13,7 +13,7 @@ static FRONTMATTER_RE: LazyLock<Regex> =
 static TAGS_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^tags:\s*\[([^\]]*)\]").unwrap());
 static TITLE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?m)^title:\s*(?:"([^"]*)"|'([^']*)'|([^\s#]+))"#).unwrap());
+    LazyLock::new(|| Regex::new(r#"(?m)^title:[ \t]*(?:"([^"]*)"|'([^']*)'|([^\r\n]+))"#).unwrap());
 
 #[derive(Debug, Clone)]
 pub struct FileData {
@@ -28,16 +28,19 @@ pub fn scan_markdown_files(
     exclude_patterns: &[String],
     max_nodes: usize,
 ) -> Vec<FileData> {
-    let excluded = resolve_exclude_set(base_dir, exclude_patterns);
+    let excluded: Vec<_> = exclude_patterns
+        .iter()
+        .filter_map(|p| Pattern::new(p.trim_end_matches('/')).ok())
+        .collect();
     let mut files = Vec::new();
 
     let patterns = ["**/*.md", "**/*.mdx"];
 
     for pattern in &patterns {
-        let full_pattern = base_dir.join(pattern).to_string_lossy().to_string();
+        let full_pattern = format!("{}/{pattern}", Pattern::escape(&base_dir.to_string_lossy()));
         if let Ok(paths) = glob(&full_pattern) {
             for entry in paths.flatten() {
-                if should_exclude(&entry, base_dir, exclude_patterns, &excluded) {
+                if should_exclude(&entry, base_dir, &excluded) {
                     continue;
                 }
                 if let Ok(data) = parse_markdown_file(&entry, base_dir) {
@@ -47,44 +50,18 @@ pub fn scan_markdown_files(
         }
     }
 
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     if max_nodes > 0 && files.len() > max_nodes {
         files.truncate(max_nodes);
     }
 
-    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     files
 }
 
-fn resolve_exclude_set(base_dir: &Path, patterns: &[String]) -> HashSet<std::path::PathBuf> {
-    let mut excluded = HashSet::new();
-    for pat in patterns {
-        if let Ok(paths) = glob(&base_dir.join(pat).to_string_lossy()) {
-            for path in paths.flatten() {
-                excluded.insert(path);
-            }
-        }
-    }
-    excluded
-}
-
-fn should_exclude(
-    path: &Path,
-    base: &Path,
-    patterns: &[String],
-    excluded: &HashSet<std::path::PathBuf>,
-) -> bool {
-    if excluded.contains(path) {
-        return true;
-    }
-    if let Ok(rel) = path.strip_prefix(base) {
-        let rel_str = rel.to_string_lossy();
-        for pat in patterns {
-            if rel_str.contains(pat) || rel_str.ends_with(pat) {
-                return true;
-            }
-        }
-    }
-    false
+fn should_exclude(path: &Path, base: &Path, patterns: &[Pattern]) -> bool {
+    path.strip_prefix(base).is_ok_and(|rel| {
+        rel.ancestors().any(|ancestor| patterns.iter().any(|p| p.matches_path(ancestor)))
+    })
 }
 
 fn parse_markdown_file(path: &Path, base: &Path) -> anyhow::Result<FileData> {
@@ -140,13 +117,16 @@ fn extract_title(content: &str) -> Option<String> {
         let fm_content = fm.get(1).unwrap().as_str();
         if let Some(title_match) = TITLE_RE.captures(fm_content) {
             if let Some(m) = title_match.get(1) {
-                return Some(m.as_str().to_string());
+                return Some(m.as_str().to_string()).filter(|s| !s.trim().is_empty());
             }
             if let Some(m) = title_match.get(2) {
-                return Some(m.as_str().to_string());
+                return Some(m.as_str().to_string()).filter(|s| !s.trim().is_empty());
             }
             if let Some(m) = title_match.get(3) {
-                return Some(m.as_str().to_string());
+                let value = m.as_str().split(" #").next().unwrap_or_default().trim();
+                if !value.is_empty() && !value.starts_with('#') {
+                    return Some(value.to_string());
+                }
             }
         }
     }
@@ -184,4 +164,30 @@ pub fn resolve_links(files: &[FileData], exclude_tags: &[String]) -> HashMap<Str
     }
 
     links
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::TestDir;
+
+    #[test]
+    fn scans_literal_root_and_excludes_directory_descendants() {
+        let temp = TestDir::new();
+        let root = temp.path().join("[notes]");
+        fs::create_dir_all(root.join("archive/deep")).unwrap();
+        fs::create_dir_all(root.join("private")).unwrap();
+        for path in ["archive/deep/hidden.md", "private/hidden.md", "keep.md", "first.mdx"] {
+            fs::write(root.join(path), "# Note\n").unwrap();
+        }
+        let files = scan_markdown_files(&root, &["archive/*".into(), "private/".into()], 0);
+        assert_eq!(files.iter().map(|f| f.relative_path.as_str()).collect::<Vec<_>>(), ["first.mdx", "keep.md"]);
+        assert_eq!(scan_markdown_files(&root, &[], 1)[0].relative_path, "archive/deep/hidden.md");
+    }
+
+    #[test]
+    fn unquoted_titles_preserve_spaces_and_ignore_comments() {
+        assert_eq!(extract_title("---\ntitle: My Note # comment\n---\n"), Some("My Note".into()));
+        assert_eq!(extract_title("---\ntitle: 'My # Note'\n---\n"), Some("My # Note".into()));
+    }
 }

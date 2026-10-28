@@ -19,6 +19,8 @@ mod settings;
 mod theme;
 mod ui;
 mod util;
+#[cfg(test)]
+mod test_support;
 #[allow(dead_code)]
 mod viewport;
 #[allow(dead_code)]

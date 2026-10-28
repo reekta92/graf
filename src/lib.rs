@@ -2,6 +2,8 @@ pub mod graph;
 pub mod linker;
 pub mod settings;
 pub mod theme;
+#[cfg(test)]
+mod test_support;
 
 // Placeholder modules that will be ported in next steps
 pub mod input;
