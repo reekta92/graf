@@ -19,6 +19,7 @@ mod settings;
 mod theme;
 mod ui;
 mod util;
+mod storage;
 #[cfg(test)]
 mod test_support;
 #[allow(dead_code)]
@@ -122,8 +123,12 @@ fn dispatch_action(
         }
         EventAction::OpenFile(path) => {
             guard.suspend()?;
-            open_file_in_editor(&path, config);
+            let result = open_file_in_editor(&app_state.base_dir, &path, config);
             guard.resume()?;
+            if let Err(error) = result {
+                app_state.config_reload_msg = Some(format!("File error: {error:#}"));
+                app_state.config_reload_ttl = 180;
+            }
         }
         EventAction::ReloadConfig => {
             let old_physics = config.physics.clone();
@@ -267,7 +272,10 @@ fn apply_graph_action(
             target_title,
             create,
         } => {
-            apply_connection(app_state, &source_id, &target_title, create);
+            if let Err(error) = apply_connection(app_state, &source_id, &target_title, create) {
+                app_state.config_reload_msg = Some(format!("File error: {error:#}"));
+                app_state.config_reload_ttl = 180;
+            }
             None
         }
         GraphAction::ClearFocus => {
@@ -386,7 +394,7 @@ fn apply_connection(
     source_id: &str,
     target_title: &str,
     create: bool,
-) {
+) -> Result<()> {
     // Direction resolution for delete: if the source note does not link to the
     // target but the target links to the source, edit the target instead.
     let mut resolved_source = source_id.to_string();
@@ -425,56 +433,40 @@ fn apply_connection(
     }
 
     // 1. Write the wikilink edit to the file on disk.
-    let path = app_state.base_dir.join(&resolved_source);
-    if let Ok(content) = std::fs::read_to_string(&path) {
-        let new_content = if create {
-            crate::wikilink::add_wikilink(&content, &resolved_target)
+    let new_content = storage::edit_note(&app_state.base_dir, &resolved_source, |content| {
+        if create {
+            crate::wikilink::add_wikilink(content, &resolved_target)
         } else {
-            crate::wikilink::remove_wikilink(&content, &resolved_target)
-        };
-        if new_content != content {
-            let _ = std::fs::write(&path, &new_content);
+            crate::wikilink::remove_wikilink(content, &resolved_target)
         }
-    }
+    })?;
 
     // 2. Keep the file list in sync until the next full rescan.
-    if let Some(f) = app_state
-        .files
-        .iter_mut()
-        .find(|f| f.relative_path == resolved_source)
-    {
-        if create {
-            if !f
-                .wikilinks
-                .iter()
-                .any(|l| l.eq_ignore_ascii_case(&resolved_target))
-            {
-                f.wikilinks.push(resolved_target.clone());
-            }
-        } else {
-            f.wikilinks
-                .retain(|l| !l.eq_ignore_ascii_case(&resolved_target));
-        }
+    if let Some(f) = app_state.files.iter_mut().find(|f| f.relative_path == resolved_source) {
+        f.wikilinks = linker::extract_wikilinks(&new_content);
     }
+    let source_title = app_state.files.iter().find(|f| f.relative_path == resolved_source)
+        .map(|f| f.title.as_str()).unwrap_or_default();
+    let connected = app_state.files.iter().any(|f| {
+        f.relative_path == resolved_source && f.wikilinks.iter().any(|l| l.eq_ignore_ascii_case(&resolved_target))
+        || f.title.eq_ignore_ascii_case(&resolved_target) && f.wikilinks.iter().any(|l| l.eq_ignore_ascii_case(source_title))
+    });
 
     // 3. Apply the edge to the live simulation (no rebuild: positions and
     // viewport are preserved).
     if let Some(gs) = app_state.graph_state.as_ref() {
         let mut g = gs.write();
         let graph = g.simulation.get_graph();
-        let src = graph
-            .node_indices()
-            .find(|&i| graph[i].data.id == resolved_source);
-        let tgt = graph
-            .node_indices()
-            .find(|&i| graph[i].data.title.eq_ignore_ascii_case(&resolved_target));
+        let src = graph.node_indices().find(|&i| graph[i].data.id == resolved_source);
+        let tgt = graph.node_indices().find(|&i| graph[i].data.title.eq_ignore_ascii_case(&resolved_target));
         if let (Some(s), Some(t)) = (src, tgt) {
-            crate::graph::apply_connection_change(&mut g.simulation, s, t, create);
+            crate::graph::apply_connection_change(&mut g.simulation, s, t, connected);
             let mut cache = g.render_cache.lock();
             cache.topology_dirty = true;
             cache.minimap_dirty = true;
         }
     }
+    Ok(())
 }
 
 fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
@@ -644,18 +636,8 @@ fn frame_area(guard: &TerminalGuard) -> Result<ratatui::layout::Rect> {
     Ok(ratatui::layout::Rect::new(0, 0, size.width, size.height))
 }
 
-fn open_file_in_editor(relative_path: &str, config: &config::GrafConfig) {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let full_path = cwd.join(relative_path);
-
-    let full_path = match full_path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-
-    if !full_path.starts_with(&cwd) {
-        return;
-    }
+fn open_file_in_editor(base_dir: &std::path::Path, relative_path: &str, config: &config::GrafConfig) -> Result<()> {
+    let full_path = storage::note_path(base_dir, relative_path)?;
 
     let editor = if let Some(cmd) = &config.editor.command {
         if !cmd.is_empty() {
@@ -667,9 +649,10 @@ fn open_file_in_editor(relative_path: &str, config: &config::GrafConfig) {
         std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string())
     };
 
-    if let Err(e) = std::process::Command::new(&editor).arg(&full_path).status() {
-        eprintln!("Failed to open editor '{}': {}", editor, e);
-    }
+    let status = std::process::Command::new(&editor).arg(&full_path).status()
+        .with_context(|| format!("failed to open editor '{editor}'"))?;
+    anyhow::ensure!(status.success(), "editor exited with {status}");
+    Ok(())
 }
 
 fn handle_search_keys(
@@ -856,6 +839,46 @@ fn run_search(app_state: &mut app::AppState, config: &config::GrafConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestDir;
+
+    #[test]
+    fn connection_failures_leave_state_unchanged_and_reverse_links_keep_edges() {
+        let temp = TestDir::new();
+        std::fs::write(temp.path().join("a.md"), "# A\n[[B]]\n").unwrap();
+        std::fs::write(temp.path().join("b.md"), "# B\n[[A]]\n").unwrap();
+        let config = config::GrafConfig::default();
+        let files = linker::scan_markdown_files(temp.path(), &[], 0);
+        let mut app = app::AppState::new(&config, temp.path().into(), files, vec![]);
+        std::fs::write(temp.path().join(".a.md.graf-save"), "another save").unwrap();
+        assert!(apply_connection(&mut app, "a.md", "B", false).is_err());
+        assert_eq!(app.files[0].wikilinks, ["B"]);
+        assert_eq!(app.graph_state.as_ref().unwrap().read().simulation.get_graph().edge_count(), 1);
+        std::fs::remove_file(temp.path().join(".a.md.graf-save")).unwrap();
+        apply_connection(&mut app, "a.md", "B", false).unwrap();
+        assert!(app.files[0].wikilinks.is_empty());
+        assert_eq!(app.graph_state.as_ref().unwrap().read().simulation.get_graph().edge_count(), 1);
+        apply_connection(&mut app, "a.md", "B", false).unwrap();
+        assert_eq!(app.graph_state.as_ref().unwrap().read().simulation.get_graph().edge_count(), 0);
+        assert!(!std::fs::read_to_string(temp.path().join("b.md")).unwrap().contains("[[A]]"));
+        app.shutdown();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn editor_resolves_against_scan_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = TestDir::new();
+        let note = temp.path().join("note.md");
+        let marker = temp.path().join("opened");
+        let editor = temp.path().join("editor");
+        std::fs::write(&note, "note").unwrap();
+        std::fs::write(&editor, format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config = config::GrafConfig::default();
+        config.editor.command = Some(editor.to_string_lossy().into_owned());
+        open_file_in_editor(temp.path(), "note.md", &config).unwrap();
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), note.canonicalize().unwrap().to_string_lossy());
+    }
 
     #[test]
     fn delete_word_preserves_unicode_boundaries() {

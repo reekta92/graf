@@ -88,7 +88,7 @@ fn parse_markdown_file(path: &Path, base: &Path) -> anyhow::Result<FileData> {
     })
 }
 
-fn extract_wikilinks(content: &str) -> Vec<String> {
+pub(crate) fn extract_wikilinks(content: &str) -> Vec<String> {
     WIKILINK_RE
         .captures_iter(content)
         .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
