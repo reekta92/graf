@@ -67,7 +67,7 @@ fn frontmatter(content: &str) -> Result<(Metadata, usize)> {
     let mut end = start;
     for line in lines {
         if matches!(line.trim_end(), "---" | "...") {
-            let metadata = serde_yaml_ng::from_str::<Option<Metadata>>(&content[start..end])
+            let metadata = serde_saphyr::from_str::<Option<Metadata>>(&content[start..end])
                 .context("invalid YAML frontmatter")?
                 .unwrap_or_default();
             return Ok((metadata, end + line.len()));
@@ -86,7 +86,7 @@ pub fn parse_note(content: &str, relative_path: &str, config: &ParsingConfig) ->
     let mut links = Vec::new();
     let mut heading = None;
     let mut in_code = false;
-    let mut in_link = false;
+    let mut link_depth = 0usize;
     for (event, range) in
         Parser::new_ext(&content[offset..], Options::ENABLE_WIKILINKS).into_offset_iter()
     {
@@ -120,13 +120,13 @@ pub fn parse_note(content: &str, relative_path: &str, config: &ParsingConfig) ->
                     wiki: matches!(link_type, LinkType::WikiLink { .. }),
                     range,
                 });
-                in_link = true;
+                link_depth += 1;
             }
-            Event::End(TagEnd::Link | TagEnd::Image) => in_link = false,
+            Event::End(TagEnd::Link | TagEnd::Image) => link_depth = link_depth.saturating_sub(1),
             Event::Text(text) | Event::Code(text) if heading.is_some() => {
                 heading.as_mut().unwrap().push_str(&text)
             }
-            Event::Text(_) if !in_code && !in_link => {
+            Event::Text(_) if !in_code && link_depth == 0 => {
                 extract_inline_tags(content, range, config, &mut tags)
             }
             _ => {}
@@ -489,8 +489,18 @@ pub fn edit_connection(
         );
         return Ok(updated);
     }
+    // Images may be nested inside links; remove each overlapping occurrence once.
+    ranges.sort_by_key(|range| (range.start, std::cmp::Reverse(range.end)));
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        if let Some(previous) = merged.last_mut().filter(|r| range.start < r.end) {
+            previous.end = previous.end.max(range.end);
+        } else {
+            merged.push(range);
+        }
+    }
     let mut updated = content.to_string();
-    for range in ranges.into_iter().rev() {
+    for range in merged.into_iter().rev() {
         updated.replace_range(range, "");
     }
     Ok(updated)
@@ -797,6 +807,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(removed, "Before  and  .\n[[b]] `[[a]]`\n\n[id]: a.md\n");
+        let nested = "Before [![alt](a.md)](a.md) after.";
+        assert_eq!(
+            edit_connection(
+                nested,
+                "source.md",
+                "a.md",
+                &notes,
+                &ParsingConfig::default(),
+                false
+            )
+            .unwrap(),
+            "Before  after."
+        );
     }
 
     #[test]

@@ -120,8 +120,9 @@ fn dispatch_action(
         }
         EventAction::OpenFile(path) => {
             guard.suspend()?;
-            open_file_in_editor(&path, config);
+            open_file_in_editor(&app_state.base_dir, &path, config);
             guard.resume()?;
+            app_state.rescan(config);
         }
         EventAction::ReloadConfig => {
             let old_physics = config.physics.clone();
@@ -559,16 +560,15 @@ fn frame_area(guard: &TerminalGuard) -> Result<ratatui::layout::Rect> {
     Ok(ratatui::layout::Rect::new(0, 0, size.width, size.height))
 }
 
-fn open_file_in_editor(relative_path: &str, config: &config::GrafConfig) {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let full_path = cwd.join(relative_path);
+fn open_file_in_editor(base: &std::path::Path, relative_path: &str, config: &config::GrafConfig) {
+    let full_path = base.join(relative_path);
 
     let full_path = match full_path.canonicalize() {
         Ok(p) => p,
         Err(_) => return,
     };
 
-    if !full_path.starts_with(&cwd) {
+    if !full_path.starts_with(base) {
         return;
     }
 
