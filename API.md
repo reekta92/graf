@@ -544,6 +544,24 @@ let hit = viewport.hit_test(wx, wy, &graph_state, &settings, canvas_area, max_li
 
 - - -
 
+## Settings behavior
+
+`max_node` applies after title resolution and tag/orphan filtering. Ranking counts both
+outgoing links and backlinks. `filter.min_links` repeatedly removes nodes below the minimum
+displayed degree. Duplicate titles do not change the identity of a link's source note.
+
+`start_physics` uses `physics.timestep`, `thread_sleep_ms`, `gravity`, and
+`prevent_overlapping` (repulsion). With `cooling = true`, updates settle or stop at
+`max_iterations` and resume after reheating. With `cooling = false`, updates continue.
+Fixed tick mode honors `thread_sleep_ms`; auto mode uses at least 33 ms above 500 nodes.
+The default initial placement span is independent of the iteration limit.
+
+After changing visual or legend settings, set `render_cache.topology_dirty` and
+`render_cache.minimap_dirty` so cached colors and legends are rebuilt.
+Legacy `filter.max_nodes`, `grid_divisions`, `drag_scale`, `border_title`, and
+`cursor_glyph` fields remain for source compatibility; use top-level `max_node` and
+the current viewport/grid/search behavior instead.
+
 ## Thread safety
 
 - `GraphState` is shared via `Arc<RwLock<GraphState>>` (`parking_lot::RwLock`).
