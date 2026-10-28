@@ -24,8 +24,8 @@ pub use settings::{
 pub mod wikilink;
 pub use graph::{
     ContextMenu, GraphNodeData, GraphState, MarqueeState, MenuItem, MenuItemSpec, ModeBanner,
-    NodeSpec, Selection, apply_connection_change, build_graph, create_simulation,
-    menu_item_from_label, menu_specs, search_nodes,
+    NodeSpec, Selection, apply_connection_change, build_graph, build_graph_resolved,
+    create_simulation, menu_item_from_label, menu_specs, search_nodes,
 };
 pub use linker::{FileData, resolve_links, scan_markdown_files};
 pub use theme::ThemeColors;

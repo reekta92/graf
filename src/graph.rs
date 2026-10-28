@@ -356,6 +356,22 @@ impl GraphState {
     /// auto-fitted viewport → bounds. Matches clin's original `GraphState::new`.
     pub fn from_specs(nodes: &[NodeSpec], settings: &Settings) -> anyhow::Result<Self> {
         let graph = build_graph(nodes, settings)?;
+        Self::from_graph(graph, settings)
+    }
+
+    /// Build from explicit source ID → target IDs, independently of display titles.
+    pub fn from_resolved_specs(
+        nodes: &[NodeSpec],
+        links: &HashMap<String, Vec<String>>,
+        settings: &Settings,
+    ) -> anyhow::Result<Self> {
+        Self::from_graph(build_graph_resolved(nodes, links, settings)?, settings)
+    }
+
+    fn from_graph(
+        graph: ForceGraph<GraphNodeData, ()>,
+        settings: &Settings,
+    ) -> anyhow::Result<Self> {
         let simulation = create_simulation(graph, settings);
         let mut state = Self::new(simulation, crate::viewport::Viewport::default());
         state.alpha = 0.4;
@@ -437,8 +453,40 @@ pub fn build_graph(
     nodes: &[NodeSpec],
     settings: &Settings,
 ) -> anyhow::Result<ForceGraph<GraphNodeData, ()>> {
+    // Keep the public title-based API for hosts that already resolve notes this way.
+    let titles: HashMap<_, _> = nodes
+        .iter()
+        .filter(|n| {
+            !n.tags
+                .iter()
+                .any(|t| settings.filter.exclude_tags.contains(t))
+        })
+        .map(|n| (n.title.to_lowercase(), n.id.clone()))
+        .collect();
+    let links = nodes
+        .iter()
+        .map(|n| {
+            let targets = n
+                .links
+                .iter()
+                .filter_map(|l| titles.get(&l.to_lowercase()).cloned())
+                .collect();
+            (n.id.clone(), targets)
+        })
+        .collect();
+    build_graph_resolved(nodes, &links, settings)
+}
+
+/// Construct edges from IDs. Titles are labels and may be duplicated.
+pub fn build_graph_resolved(
+    nodes: &[NodeSpec],
+    links: &HashMap<String, Vec<String>>,
+    settings: &Settings,
+) -> anyhow::Result<ForceGraph<GraphNodeData, ()>> {
     let mut graph: ForceGraph<GraphNodeData, ()> = ForceGraph::default();
-    let mut title_to_index: HashMap<String, NodeIndex> = HashMap::new();
+    let mut id_to_index: HashMap<String, NodeIndex> = HashMap::new();
+    let mut ids = HashSet::new();
+    anyhow::ensure!(nodes.iter().all(|n| ids.insert(&n.id)), "duplicate node ID");
 
     let show_orphan = settings.filter.show_orphan;
 
@@ -456,20 +504,17 @@ pub fn build_graph(
         valid_nodes.push(node);
     }
 
-    // 2. Map valid titles for edge validation
-    let valid_titles: HashSet<String> =
-        valid_nodes.iter().map(|n| n.title.to_lowercase()).collect();
+    // 2. Map valid IDs for edge validation
+    let valid_ids: HashSet<&String> = valid_nodes.iter().map(|n| &n.id).collect();
 
     // 3. Find titles that participate in at least one valid edge
     let mut has_valid_edge = HashSet::new();
     if !show_orphan {
         for node in &valid_nodes {
-            let source_title = node.title.to_lowercase();
-            for link in &node.links {
-                let target_title = link.to_lowercase();
-                if target_title != source_title && valid_titles.contains(&target_title) {
-                    has_valid_edge.insert(source_title.clone());
-                    has_valid_edge.insert(target_title);
+            for target in links.get(&node.id).into_iter().flatten() {
+                if target != &node.id && valid_ids.contains(target) {
+                    has_valid_edge.insert(node.id.clone());
+                    has_valid_edge.insert(target.clone());
                 }
             }
         }
@@ -478,7 +523,7 @@ pub fn build_graph(
     // 4. Collect final candidates (excluding orphans if requested)
     let mut candidates: Vec<&NodeSpec> = Vec::new();
     for node in valid_nodes {
-        if !show_orphan && !has_valid_edge.contains(&node.title.to_lowercase()) {
+        if !show_orphan && !has_valid_edge.contains(&node.id) {
             continue;
         }
         candidates.push(node);
@@ -487,7 +532,7 @@ pub fn build_graph(
     // Apply max_node cap: keep most-connected nodes
     let max_node = settings.max_node;
     if max_node > 0 && candidates.len() > max_node {
-        candidates.sort_by_key(|b| std::cmp::Reverse(b.links.len()));
+        candidates.sort_by_key(|b| std::cmp::Reverse(links.get(&b.id).map_or(0, Vec::len)));
         candidates.truncate(max_node);
     }
 
@@ -502,23 +547,20 @@ pub fn build_graph(
         };
 
         let idx = graph.add_force_node(&node.title, data);
-        title_to_index.insert(node.title.to_lowercase(), idx);
+        id_to_index.insert(node.id.clone(), idx);
     }
 
     let mut has_final_edge = std::collections::HashSet::new();
 
-    for node in nodes {
-        let source_title = node.title.to_lowercase();
-
-        let source_idx = match title_to_index.get(&source_title) {
+    for node in &candidates {
+        let source_idx = match id_to_index.get(&node.id) {
             Some(&idx) => idx,
             None => continue,
         };
 
         let mut seen_targets = std::collections::HashSet::new();
-        for link in &node.links {
-            let target_lower = link.to_lowercase();
-            if let Some(&target_idx) = title_to_index.get(&target_lower)
+        for target in links.get(&node.id).into_iter().flatten() {
+            if let Some(&target_idx) = id_to_index.get(target)
                 && target_idx != source_idx
                 && seen_targets.insert(target_idx)
                 && graph.edges_connecting(source_idx, target_idx).count() == 0
@@ -945,6 +987,59 @@ pub fn apply_connection_change(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spec(id: &str, title: &str, links: &[&str]) -> NodeSpec {
+        NodeSpec {
+            id: id.into(),
+            title: title.into(),
+            tags: vec![],
+            folder: String::new(),
+            links: links.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn resolved_edges_distinguish_duplicate_titles_and_excluded_sources() {
+        let mut nodes = vec![
+            spec("a.md", "todo", &[]),
+            spec("b.md", "todo", &[]),
+            spec("c.md", "source", &[]),
+        ];
+        let links = HashMap::from([
+            ("c.md".into(), vec!["a.md".into(), "a.md".into()]),
+            ("b.md".into(), vec!["c.md".into()]),
+        ]);
+        let mut settings = Settings::default();
+        nodes[1].tags.push("private".into());
+        settings.filter.exclude_tags.push("private".into());
+        let graph = build_graph_resolved(&nodes, &links, &settings).unwrap();
+        assert_eq!(graph.node_count(), 2);
+        assert_eq!(graph.edge_count(), 1);
+        assert!(
+            graph
+                .node_weights()
+                .all(|n| n.data.id != "b.md" && n.data.link_count == 1)
+        );
+    }
+
+    #[test]
+    fn legacy_titles_still_resolve_case_insensitively() {
+        let nodes = [spec("a", "Alpha", &["BETA"]), spec("b", "Beta", &[])];
+        let graph = build_graph(&nodes, &Settings::default()).unwrap();
+        assert_eq!((graph.node_count(), graph.edge_count()), (2, 1));
+    }
+
+    #[test]
+    fn resolved_edges_are_pruned_after_node_limit() {
+        let nodes = [spec("a", "same", &[]), spec("b", "same", &[])];
+        let links = HashMap::from([("a".into(), vec!["b".into()])]);
+        let settings = Settings {
+            max_node: 1,
+            ..Settings::default()
+        };
+        let graph = build_graph_resolved(&nodes, &links, &settings).unwrap();
+        assert_eq!(graph.node_count(), 0);
+    }
 
     #[test]
     fn test_selection_new() {
