@@ -548,7 +548,11 @@ fn main() -> Result<()> {
     }
     apply_cli_overrides(&mut config, &cli);
 
-    config_errors.extend(config.validate());
+    let validation_errors = config.validate();
+    if !validation_errors.is_empty() {
+        config_errors.extend(validation_errors);
+        config = config::GrafConfig::default();
+    }
 
     let cwd = if let Some(ref dir) = cli.dir {
         dir.canonicalize()

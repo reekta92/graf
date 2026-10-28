@@ -60,7 +60,7 @@ impl GrafConfig {
                 self.visual.label_max_length
             ));
         }
-        if self.visual.node_size < 1.0 || self.visual.node_size > 5.0 {
+        if !self.visual.node_size.is_finite() || self.visual.node_size < 1.0 || self.visual.node_size > 5.0 {
             errs.push(format!(
                 "visual.node_size must be 1.0-5.0, got {}",
                 self.visual.node_size
@@ -79,11 +79,31 @@ impl GrafConfig {
                 self.visual.edge_thickness
             ));
         }
-        if self.interaction.zoom_factor <= 0.0 {
+        if !self.interaction.zoom_factor.is_finite() || self.interaction.zoom_factor <= 1.0 {
             errs.push(format!(
-                "interaction.zoom_factor must be > 0, got {}",
+                "interaction.zoom_factor must be finite and > 1, got {}",
                 self.interaction.zoom_factor
             ));
+        }
+        for (name, value) in [
+            ("physics.ideal_distance", self.physics.ideal_distance),
+            ("physics.timestep", self.physics.timestep),
+        ] {
+            if !value.is_finite() || value <= 0.0 || !(value as f32).is_finite() {
+                errs.push(format!("{name} must be finite and > 0, got {value}"));
+            }
+        }
+        if !self.physics.damping.is_finite() || !(0.0..=1.0).contains(&self.physics.damping) {
+            errs.push("physics.damping must be finite and between 0 and 1".into());
+        }
+        if !self.physics.gravity.is_finite() || self.physics.gravity < 0.0 || !(self.physics.gravity as f32).is_finite() {
+            errs.push("physics.gravity must be finite and >= 0".into());
+        }
+        if self.physics.max_iterations == 0 || self.physics.thread_sleep_ms == 0 {
+            errs.push("physics.max_iterations and physics.thread_sleep_ms must be > 0".into());
+        }
+        if !self.interaction.auto_fit_padding.is_finite() || self.interaction.auto_fit_padding < 1.0 {
+            errs.push("interaction.auto_fit_padding must be finite and >= 1".into());
         }
         // Warn if legend and minimap would overlap in the same corner
         if self.visual.show_legend && self.visual.show_minimap {
@@ -306,4 +326,18 @@ fn migrate_toml(content: &str) -> String {
 
 fn generate_default_toml() -> &'static str {
     include_str!("default_config.toml")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_nonfinite_or_unusable_simulation_settings() {
+        let config: GrafConfig = toml::from_str("[physics]\ntimestep = nan\ngravity = -1\nmax_iterations = 0\nthread_sleep_ms = 0\n[interaction]\nzoom_factor = 1\nauto_fit_padding = 0").unwrap();
+        let errors = config.validate().join("\n");
+        for name in ["timestep", "gravity", "max_iterations", "thread_sleep_ms", "zoom_factor", "auto_fit_padding"] {
+            assert!(errors.contains(name), "missing validation for {name}: {errors}");
+        }
+    }
 }

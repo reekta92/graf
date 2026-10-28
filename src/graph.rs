@@ -533,17 +533,19 @@ pub fn create_simulation(
     graph: ForceGraph<GraphNodeData, ()>,
     settings: &Settings,
 ) -> Simulation<GraphNodeData, ()> {
-    let force = fdg_sim::force::handy(
+    let mut force = fdg_sim::force::handy(
         settings.physics.ideal_distance as f32,
         settings.physics.damping,
-        true,
+        settings.physics.gravity > 0.0,
         true,
     );
-    let params = SimulationParameters::new(
-        settings.physics.max_iterations as f32,
-        fdg_sim::Dimensions::Two,
-        force,
-    );
+    if let Some(value) = force.dict.get_mut("Gravity Factor").and_then(|v| v.number_mut()) {
+        *value = settings.physics.gravity as f32;
+    }
+    if let Some(value) = force.dict.get_mut("Repulsive Force").and_then(|v| v.bool_mut()) {
+        *value = settings.physics.prevent_overlapping;
+    }
+    let params = SimulationParameters::from_force(force);
     Simulation::from_graph(graph, params)
 }
 

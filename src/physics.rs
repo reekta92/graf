@@ -149,6 +149,38 @@ fn continuous_simulation_step(state: &mut GraphState, timestep: f32) {
     state.is_settled = false;
 }
 
+fn physics_tick(
+    state: &mut GraphState,
+    config: &crate::settings::PhysicsConfig,
+    iterations: &mut usize,
+    previous_alpha: &mut f32,
+) {
+    if state.alpha > *previous_alpha || state.dragging_node.is_some() {
+        *iterations = 0;
+    }
+    if config.cooling {
+        if *iterations < config.max_iterations && !state.is_settled {
+            simulation_step(state, config.timestep as f32);
+            *iterations += 1;
+        } else {
+            state.is_settled = true;
+            state.alpha = 0.0;
+        }
+    } else {
+        continuous_simulation_step(state, config.timestep as f32);
+    }
+    *previous_alpha = state.alpha;
+}
+
+fn tick_sleep_ms(config: &crate::settings::PhysicsConfig, node_count: usize) -> u64 {
+    let requested = config.thread_sleep_ms.max(1);
+    if config.tick_rate == crate::settings::PhysicsTickRate::Fixed || node_count <= 500 {
+        requested
+    } else {
+        requested.max(33)
+    }
+}
+
 pub fn start_physics(
     state: Arc<RwLock<GraphState>>,
     settings: &Settings,
@@ -170,24 +202,16 @@ pub fn start_physics(
         guard.physics_worker_active = true;
     }
 
-    let timestep = 0.12;
-
     // Compute tick rate based on config mode and node count
-    let tick_rate_mode = settings.physics.tick_rate;
-    let sleep_ms: u64 = if tick_rate_mode == crate::settings::PhysicsTickRate::Fixed {
-        16
-    } else {
-        match node_count {
-            0..=500 => 16,    // ~60Hz
-            501..=1000 => 33, // ~30Hz
-            _ => 66,
-        }
-    };
+    let sleep_ms = tick_sleep_ms(&settings.physics, node_count);
+    let physics = settings.physics.clone();
 
     let (kill_tx, kill_rx) = mpsc::channel();
     let state_clone = state.clone();
 
     std::thread::spawn(move || {
+        let mut iterations = 0;
+        let mut previous_alpha = 0.0;
         loop {
             match kill_rx.try_recv() {
                 Ok(_) | Err(mpsc::TryRecvError::Disconnected) => {
@@ -212,7 +236,7 @@ pub fn start_physics(
                         node.velocity = fdg_sim::glam::Vec3::ZERO;
                     }
                 }
-                continuous_simulation_step(&mut guard, timestep as f32);
+                physics_tick(&mut guard, &physics, &mut iterations, &mut previous_alpha);
             }
 
             std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
@@ -657,4 +681,46 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn configured_iterations_stop_and_reheating_restarts_simulation() {
+        let mut state = setup_mock_graph(&[("a", &["b"]), ("b", &[])]);
+        state.physics_worker_active = true;
+        let mut config = Settings::default().physics;
+        config.max_iterations = 2;
+        config.timestep = 0.02;
+        let mut iterations = 0;
+        let mut previous = 0.0;
+        for _ in 0..3 { physics_tick(&mut state, &config, &mut iterations, &mut previous); }
+        assert_eq!(iterations, 2);
+        assert!(state.is_settled);
+        state.reheat(0.4);
+        physics_tick(&mut state, &config, &mut iterations, &mut previous);
+        assert_eq!(iterations, 1);
+        assert!(!state.is_settled);
+        config.cooling = false;
+        state.alpha = 0.0;
+        physics_tick(&mut state, &config, &mut iterations, &mut previous);
+        assert!(!state.is_settled);
+        config.thread_sleep_ms = 100;
+        assert_eq!(tick_sleep_ms(&config, 100), 100);
+        assert_eq!(tick_sleep_ms(&config, 1000), 100);
+        config.thread_sleep_ms = 5;
+        assert_eq!(tick_sleep_ms(&config, 1000), 33);
+        config.tick_rate = crate::settings::PhysicsTickRate::Fixed;
+        assert_eq!(tick_sleep_ms(&config, 1000), 5);
+    }
+
+    #[test]
+    fn native_force_honors_gravity_and_repulsion_settings() {
+        let mut settings = Settings::default();
+        settings.physics.gravity = 0.25;
+        settings.physics.prevent_overlapping = false;
+        let graph = fdg_sim::ForceGraph::<GraphNodeData, ()>::default();
+        let simulation = create_simulation(graph, &settings);
+        let force = simulation.parameters().force();
+        assert_eq!(force.dict["Gravity Factor"].number(), Some(0.25));
+        assert_eq!(force.dict["Repulsive Force"].bool(), Some(false));
+        assert_eq!(simulation.parameters().node_start_size, 200.0);
+    }
+
 }
