@@ -768,18 +768,6 @@ pub fn parse_hex_color(s: &str) -> Option<Color> {
     }
 }
 
-#[cfg(test)]
-mod color_tests {
-    use super::*;
-
-    #[test]
-    fn hex_colors_reject_non_ascii_without_panicking() {
-        assert_eq!(parse_hex_color("#a€bc"), None);
-        assert_eq!(parse_hex_color("#12xy34"), None);
-        assert_eq!(parse_hex_color("#12abEF"), Some(Color::Rgb(18, 171, 239)));
-    }
-}
-
 pub fn deserialize_optional_color<'de, D>(deserializer: D) -> Result<Option<Color>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -790,5 +778,17 @@ where
         Some(s) => parse_hex_color(&s)
             .map(Some)
             .ok_or_else(|| serde::de::Error::custom(format!("invalid hex color: {}", s))),
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+
+    #[test]
+    fn hex_colors_reject_non_ascii_without_panicking() {
+        assert_eq!(parse_hex_color("#a€bc"), None);
+        assert_eq!(parse_hex_color("#12xy34"), None);
+        assert_eq!(parse_hex_color("#12abEF"), Some(Color::Rgb(18, 171, 239)));
     }
 }

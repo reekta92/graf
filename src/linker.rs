@@ -60,7 +60,8 @@ pub fn scan_markdown_files(
 
 fn should_exclude(path: &Path, base: &Path, patterns: &[Pattern]) -> bool {
     path.strip_prefix(base).is_ok_and(|rel| {
-        rel.ancestors().any(|ancestor| patterns.iter().any(|p| p.matches_path(ancestor)))
+        rel.ancestors()
+            .any(|ancestor| patterns.iter().any(|p| p.matches_path(ancestor)))
     })
 }
 
@@ -177,17 +178,37 @@ mod tests {
         let root = temp.path().join("[notes]");
         fs::create_dir_all(root.join("archive/deep")).unwrap();
         fs::create_dir_all(root.join("private")).unwrap();
-        for path in ["archive/deep/hidden.md", "private/hidden.md", "keep.md", "first.mdx"] {
+        for path in [
+            "archive/deep/hidden.md",
+            "private/hidden.md",
+            "keep.md",
+            "first.mdx",
+        ] {
             fs::write(root.join(path), "# Note\n").unwrap();
         }
         let files = scan_markdown_files(&root, &["archive/*".into(), "private/".into()], 0);
-        assert_eq!(files.iter().map(|f| f.relative_path.as_str()).collect::<Vec<_>>(), ["first.mdx", "keep.md"]);
-        assert_eq!(scan_markdown_files(&root, &[], 1)[0].relative_path, "archive/deep/hidden.md");
+        assert_eq!(
+            files
+                .iter()
+                .map(|f| f.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            ["first.mdx", "keep.md"]
+        );
+        assert_eq!(
+            scan_markdown_files(&root, &[], 1)[0].relative_path,
+            "archive/deep/hidden.md"
+        );
     }
 
     #[test]
     fn unquoted_titles_preserve_spaces_and_ignore_comments() {
-        assert_eq!(extract_title("---\ntitle: My Note # comment\n---\n"), Some("My Note".into()));
-        assert_eq!(extract_title("---\ntitle: 'My # Note'\n---\n"), Some("My # Note".into()));
+        assert_eq!(
+            extract_title("---\ntitle: My Note # comment\n---\n"),
+            Some("My Note".into())
+        );
+        assert_eq!(
+            extract_title("---\ntitle: 'My # Note'\n---\n"),
+            Some("My # Note".into())
+        );
     }
 }

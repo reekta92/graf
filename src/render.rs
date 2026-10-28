@@ -534,7 +534,8 @@ impl RenderCache {
                 let mut sorted: Vec<_> = items.iter().collect();
                 sorted.sort_by_key(|(t, _)| t.as_str());
                 sorted.truncate(settings.legend.max_items);
-                (!sorted.is_empty()).then(|| sorted.into_iter().map(|(t, c)| (t.clone(), *c)).collect())
+                (!sorted.is_empty())
+                    .then(|| sorted.into_iter().map(|(t, c)| (t.clone(), *c)).collect())
             }
         } else {
             None
@@ -786,8 +787,7 @@ impl RenderCache {
             self.label_texts.clear();
             for idx in graph.node_indices() {
                 let node = &graph[idx];
-                let truncated =
-                    truncate(&node.data.title, settings.visual.label_max_length);
+                let truncated = truncate(&node.data.title, settings.visual.label_max_length);
                 self.label_texts.insert(idx, truncated);
             }
             self.cached_label_max_length = settings.visual.label_max_length;
@@ -870,7 +870,9 @@ pub fn draw_graph_view(
     flags: &FeatureFlags,
 ) {
     let canvas_area = canvas_area(area, flags.show_status_bar);
-    if canvas_area.is_empty() { return; }
+    if canvas_area.is_empty() {
+        return;
+    }
     let aspect = canvas_area.width as f64 / canvas_area.height as f64;
     let viewport = &state.viewport;
     let colors = theme;
@@ -1855,7 +1857,11 @@ mod tests {
         let mut settings = Settings::default();
         settings.filter.show_orphan = true;
         let specs = [crate::graph::NodeSpec {
-            id: "a".into(), title: "A".into(), tags: vec![], folder: String::new(), links: vec![],
+            id: "a".into(),
+            title: "A".into(),
+            tags: vec![],
+            folder: String::new(),
+            links: vec![],
         }];
         let mut state = GraphState::from_specs(&specs, &settings).unwrap();
         for n in state.simulation.get_graph_mut().node_weights_mut() {
@@ -1864,12 +1870,36 @@ mod tests {
         }
         state.viewport.center_x = 0.0;
         state.viewport.center_y = 0.0;
-        let flags = FeatureFlags { show_legend: false, grid: false, show_minimap: false, show_status_bar: false };
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let flags = FeatureFlags {
+            show_legend: false,
+            grid: false,
+            show_minimap: false,
+            show_status_bar: false,
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         for zoom in [1_000_000.0, 1e20] {
             state.viewport.zoom = zoom;
-            terminal.draw(|f| draw_graph_view(f, f.area(), &state, &settings, &ThemeColors::resolve(&settings), &flags)).unwrap();
-            assert!(terminal.backend().buffer().content.iter().any(|c| c.symbol() != " "));
+            terminal
+                .draw(|f| {
+                    draw_graph_view(
+                        f,
+                        f.area(),
+                        &state,
+                        &settings,
+                        &ThemeColors::resolve(&settings),
+                        &flags,
+                    )
+                })
+                .unwrap();
+            assert!(
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .any(|c| c.symbol() != " ")
+            );
         }
     }
 
@@ -1877,16 +1907,43 @@ mod tests {
     fn hidden_single_group_legend_does_not_rebuild_topology() {
         let mut settings = Settings::default();
         settings.filter.show_orphan = true;
-        let state = GraphState::from_specs(&[crate::graph::NodeSpec {
-            id: "a".into(), title: "A".into(), tags: vec![], folder: String::new(), links: vec![],
-        }], &settings).unwrap();
-        let flags = FeatureFlags { show_legend: true, grid: false, show_minimap: false, show_status_bar: false };
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
-        let draw = |f: &mut ratatui::Frame| draw_graph_view(f, f.area(), &state, &settings, &ThemeColors::resolve(&settings), &flags);
+        let state = GraphState::from_specs(
+            &[crate::graph::NodeSpec {
+                id: "a".into(),
+                title: "A".into(),
+                tags: vec![],
+                folder: String::new(),
+                links: vec![],
+            }],
+            &settings,
+        )
+        .unwrap();
+        let flags = FeatureFlags {
+            show_legend: true,
+            grid: false,
+            show_minimap: false,
+            show_status_bar: false,
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let draw = |f: &mut ratatui::Frame| {
+            draw_graph_view(
+                f,
+                f.area(),
+                &state,
+                &settings,
+                &ThemeColors::resolve(&settings),
+                &flags,
+            )
+        };
         terminal.draw(draw).unwrap();
         let idx = state.simulation.get_graph().node_indices().next().unwrap();
         assert!(state.render_cache.lock().legend_data.is_none());
-        state.render_cache.lock().label_texts.insert(idx, "cached".into());
+        state
+            .render_cache
+            .lock()
+            .label_texts
+            .insert(idx, "cached".into());
         terminal.draw(draw).unwrap();
         assert_eq!(state.render_cache.lock().label_texts[&idx], "cached");
     }
@@ -1897,14 +1954,47 @@ mod tests {
         settings.filter.show_orphan = true;
         settings.legend.max_items = 1;
         settings.legend.position = LegendPosition::TopLeft;
-        let specs: Vec<_> = ["a", "b"].into_iter().map(|id| crate::graph::NodeSpec {
-            id: id.into(), title: id.into(), tags: vec![], folder: id.into(), links: vec![],
-        }).collect();
+        let specs: Vec<_> = ["a", "b"]
+            .into_iter()
+            .map(|id| crate::graph::NodeSpec {
+                id: id.into(),
+                title: id.into(),
+                tags: vec![],
+                folder: id.into(),
+                links: vec![],
+            })
+            .collect();
         let state = GraphState::from_specs(&specs, &settings).unwrap();
-        let flags = FeatureFlags { show_legend: true, grid: false, show_minimap: false, show_status_bar: false };
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|f| draw_graph_view(f, f.area(), &state, &settings, &ThemeColors::resolve(&settings), &flags)).unwrap();
-        assert_eq!(state.render_cache.lock().legend_data.as_ref().unwrap().len(), 1);
+        let flags = FeatureFlags {
+            show_legend: true,
+            grid: false,
+            show_minimap: false,
+            show_status_bar: false,
+        };
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|f| {
+                draw_graph_view(
+                    f,
+                    f.area(),
+                    &state,
+                    &settings,
+                    &ThemeColors::resolve(&settings),
+                    &flags,
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            state
+                .render_cache
+                .lock()
+                .legend_data
+                .as_ref()
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "┌");
     }
 

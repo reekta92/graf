@@ -5,9 +5,17 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, ensure};
 
 pub fn note_path(base: &Path, relative: &str) -> Result<PathBuf> {
-    let base = base.canonicalize().context("cannot resolve note directory")?;
-    let path = base.join(relative).canonicalize().context("cannot resolve note path")?;
-    ensure!(path.starts_with(&base) && path.is_file(), "note is outside the scan directory or not a file");
+    let base = base
+        .canonicalize()
+        .context("cannot resolve note directory")?;
+    let path = base
+        .join(relative)
+        .canonicalize()
+        .context("cannot resolve note path")?;
+    ensure!(
+        path.starts_with(&base) && path.is_file(),
+        "note is outside the scan directory or not a file"
+    );
     Ok(path)
 }
 
@@ -21,7 +29,10 @@ pub fn edit_note(base: &Path, relative: &str, edit: impl FnOnce(&str) -> String)
         return Ok(original);
     }
 
-    let staged = path.with_file_name(format!(".{}.graf-save", path.file_name().unwrap().to_string_lossy()));
+    let staged = path.with_file_name(format!(
+        ".{}.graf-save",
+        path.file_name().unwrap().to_string_lossy()
+    ));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -30,14 +41,19 @@ pub fn edit_note(base: &Path, relative: &str, edit: impl FnOnce(&str) -> String)
         options.mode(0o600);
     }
     // The staging file also excludes another graf writer; never overwrite it.
-    let mut file = options.open(&staged).context("cannot stage note; another save or a stale .graf-save file exists")?;
+    let mut file = options
+        .open(&staged)
+        .context("cannot stage note; another save or a stale .graf-save file exists")?;
     let mut renamed = false;
     let result = (|| {
         file.write_all(replacement.as_bytes())?;
         file.set_permissions(permissions)?;
         file.sync_all()?;
         // shortcut: external editors may race the final check; transactional hosts need shared locking.
-        ensure!(fs::read_to_string(&path)? == original, "note changed during save; retry after refreshing");
+        ensure!(
+            fs::read_to_string(&path)? == original,
+            "note changed during save; retry after refreshing"
+        );
         fs::rename(&staged, &path)?;
         renamed = true;
         #[cfg(unix)]
@@ -60,7 +76,10 @@ mod tests {
         let temp = TestDir::new();
         let path = temp.path().join("a.md");
         fs::write(&path, "original").unwrap();
-        assert_eq!(edit_note(temp.path(), "a.md", |_| "saved".into()).unwrap(), "saved");
+        assert_eq!(
+            edit_note(temp.path(), "a.md", |_| "saved".into()).unwrap(),
+            "saved"
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "saved");
         fs::write(temp.path().join(".a.md.graf-save"), "other writer").unwrap();
         assert!(edit_note(temp.path(), "a.md", |_| "bad".into()).is_err());
@@ -72,10 +91,13 @@ mod tests {
         let temp = TestDir::new();
         let path = temp.path().join("a.md");
         fs::write(&path, "original").unwrap();
-        assert!(edit_note(temp.path(), "a.md", |_| {
-            fs::write(&path, "editor change").unwrap();
-            "graf change".into()
-        }).is_err());
+        assert!(
+            edit_note(temp.path(), "a.md", |_| {
+                fs::write(&path, "editor change").unwrap();
+                "graf change".into()
+            })
+            .is_err()
+        );
         assert_eq!(fs::read_to_string(path).unwrap(), "editor change");
         assert!(!temp.path().join(".a.md.graf-save").exists());
     }
@@ -94,7 +116,10 @@ mod tests {
         fs::write(&path, "original").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
         edit_note(temp.path(), "a.md", |_| "saved".into()).unwrap();
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
         fs::set_permissions(&path, fs::Permissions::from_mode(0o440)).unwrap();
         assert!(edit_note(temp.path(), "a.md", |_| "bad".into()).is_err());
     }

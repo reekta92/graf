@@ -635,8 +635,16 @@ mod tests {
     #[test]
     fn auto_fit_contains_nodes_in_wide_and_tall_canvases() {
         let (state, _) = make_state(&[(-100.0, -50.0, 0), (100.0, 50.0, 0)]);
-        for area in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 24, 80), Rect::new(0, 0, 1, 1)] {
-            let vp = Viewport::default().auto_fit_from_graph_in_area(state.simulation.get_graph(), 1.4, area);
+        for area in [
+            Rect::new(0, 0, 80, 24),
+            Rect::new(0, 0, 24, 80),
+            Rect::new(0, 0, 1, 1),
+        ] {
+            let vp = Viewport::default().auto_fit_from_graph_in_area(
+                state.simulation.get_graph(),
+                1.4,
+                area,
+            );
             let aspect = area.width as f64 / area.height as f64;
             let xb = vp.x_bounds(aspect);
             let yb = vp.y_bounds(aspect);

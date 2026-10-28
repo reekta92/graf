@@ -66,9 +66,10 @@ impl AppState {
         let kill_tx = crate::physics::start_physics(state.clone(), config);
         let auto_fit_baseline = {
             let mut guard = state.write();
-            let vp = guard
-                .viewport
-                .auto_fit_from_graph(guard.simulation.get_graph(), config.interaction.auto_fit_padding);
+            let vp = guard.viewport.auto_fit_from_graph(
+                guard.simulation.get_graph(),
+                config.interaction.auto_fit_padding,
+            );
             guard.viewport = vp;
             Some((
                 guard.viewport.center_x,
@@ -112,7 +113,11 @@ impl AppState {
                 self.auto_fit_baseline = None;
             } else if guard.is_settled {
                 let area = guard.render_cache.lock().canvas_area;
-                let fitted = vp.auto_fit_from_graph_in_area(guard.simulation.get_graph(), config.interaction.auto_fit_padding, area);
+                let fitted = vp.auto_fit_from_graph_in_area(
+                    guard.simulation.get_graph(),
+                    config.interaction.auto_fit_padding,
+                    area,
+                );
                 guard.viewport = fitted;
                 self.auto_fit_baseline = None;
             }
@@ -123,18 +128,29 @@ impl AppState {
         if let (Some(baseline), Some(state)) = (self.auto_fit_baseline, &self.graph_state) {
             let mut guard = state.write();
             if guard.render_cache.lock().canvas_area != area
-                && (guard.viewport.center_x, guard.viewport.center_y, guard.viewport.zoom) == baseline
+                && (
+                    guard.viewport.center_x,
+                    guard.viewport.center_y,
+                    guard.viewport.zoom,
+                ) == baseline
             {
                 guard.viewport = guard.viewport.auto_fit_from_graph_in_area(
-                    guard.simulation.get_graph(), config.interaction.auto_fit_padding, area,
+                    guard.simulation.get_graph(),
+                    config.interaction.auto_fit_padding,
+                    area,
                 );
-                self.auto_fit_baseline = Some((guard.viewport.center_x, guard.viewport.center_y, guard.viewport.zoom));
+                self.auto_fit_baseline = Some((
+                    guard.viewport.center_x,
+                    guard.viewport.center_y,
+                    guard.viewport.zoom,
+                ));
             }
         }
     }
 
     pub fn rescan_files(&mut self, config: &GrafConfig) {
-        self.files = crate::linker::scan_markdown_files(&self.base_dir, &config.filter.exclude_patterns, 0);
+        self.files =
+            crate::linker::scan_markdown_files(&self.base_dir, &config.filter.exclude_patterns, 0);
         self.refresh_simulation(config);
     }
 
@@ -166,11 +182,24 @@ impl AppState {
         let kill_tx = crate::physics::start_physics(state.clone(), &effective);
         let baseline = {
             let guard = state.read();
-            (guard.viewport.center_x, guard.viewport.center_y, guard.viewport.zoom)
+            (
+                guard.viewport.center_x,
+                guard.viewport.center_y,
+                guard.viewport.zoom,
+            )
         };
         if self.focus_note_ids.is_some() {
-            let mode = self.graph_state.as_ref().and_then(|s| s.read().mode_banner)
-                .filter(|m| matches!(m, crate::graph::ModeBanner::LocalGraph | crate::graph::ModeBanner::GroupedGraph));
+            let mode = self
+                .graph_state
+                .as_ref()
+                .and_then(|s| s.read().mode_banner)
+                .filter(|m| {
+                    matches!(
+                        m,
+                        crate::graph::ModeBanner::LocalGraph
+                            | crate::graph::ModeBanner::GroupedGraph
+                    )
+                });
             state.write().mode_banner = mode;
         }
         self.graph_state = Some(state);

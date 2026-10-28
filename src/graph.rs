@@ -445,12 +445,20 @@ pub fn build_graph(
     let show_orphan = settings.filter.show_orphan;
 
     // 1. Filter out nodes excluded by tags
-    let valid_nodes: Vec<_> = nodes.iter().filter(|n| {
-        !n.tags.iter().any(|t| settings.filter.exclude_tags.contains(t))
-    }).collect();
+    let valid_nodes: Vec<_> = nodes
+        .iter()
+        .filter(|n| {
+            !n.tags
+                .iter()
+                .any(|t| settings.filter.exclude_tags.contains(t))
+        })
+        .collect();
 
     // 2. Map valid titles for edge validation
-    let valid_titles: HashMap<_, _> = valid_nodes.iter().map(|n| (n.title.to_lowercase(), *n)).collect();
+    let valid_titles: HashMap<_, _> = valid_nodes
+        .iter()
+        .map(|n| (n.title.to_lowercase(), *n))
+        .collect();
 
     // 3. Find titles that participate in at least one valid edge
     let mut degrees: HashMap<&str, HashSet<&str>> = HashMap::new();
@@ -466,14 +474,17 @@ pub fn build_graph(
     }
 
     // 4. Collect final candidates (excluding orphans if requested)
-    let mut candidates: Vec<_> = valid_nodes.iter().copied().filter(|n| {
-        show_orphan || degrees.get(n.id.as_str()).is_some_and(|d| !d.is_empty())
-    }).collect();
+    let mut candidates: Vec<_> = valid_nodes
+        .iter()
+        .copied()
+        .filter(|n| show_orphan || degrees.get(n.id.as_str()).is_some_and(|d| !d.is_empty()))
+        .collect();
 
     // Apply max_node cap: keep most-connected nodes
     let max_node = settings.max_node;
     if max_node > 0 && candidates.len() > max_node {
-        candidates.sort_by_key(|n| std::cmp::Reverse(degrees.get(n.id.as_str()).map_or(0, HashSet::len)));
+        candidates
+            .sort_by_key(|n| std::cmp::Reverse(degrees.get(n.id.as_str()).map_or(0, HashSet::len)));
         candidates.truncate(max_node);
     }
 
@@ -508,8 +519,13 @@ pub fn build_graph(
 
     let minimum = settings.filter.min_links.max(usize::from(!show_orphan));
     loop {
-        let mut to_remove: Vec<_> = graph.node_indices().filter(|&i| graph.edges(i).count() < minimum).collect();
-        if to_remove.is_empty() { break; }
+        let mut to_remove: Vec<_> = graph
+            .node_indices()
+            .filter(|&i| graph.edges(i).count() < minimum)
+            .collect();
+        if to_remove.is_empty() {
+            break;
+        }
         to_remove.sort_unstable_by(|a, b| b.cmp(a));
         for idx in to_remove {
             graph.remove_node(idx);
@@ -539,10 +555,18 @@ pub fn create_simulation(
         settings.physics.gravity > 0.0,
         true,
     );
-    if let Some(value) = force.dict.get_mut("Gravity Factor").and_then(|v| v.number_mut()) {
+    if let Some(value) = force
+        .dict
+        .get_mut("Gravity Factor")
+        .and_then(|v| v.number_mut())
+    {
         *value = settings.physics.gravity as f32;
     }
-    if let Some(value) = force.dict.get_mut("Repulsive Force").and_then(|v| v.bool_mut()) {
+    if let Some(value) = force
+        .dict
+        .get_mut("Repulsive Force")
+        .and_then(|v| v.bool_mut())
+    {
         *value = settings.physics.prevent_overlapping;
     }
     let params = SimulationParameters::from_force(force);
@@ -1070,17 +1094,41 @@ mod tests {
         assert_eq!(menu.visible_offset(rect.height), 17);
     }
     fn spec(id: &str, title: &str, links: &[&str]) -> NodeSpec {
-        NodeSpec { id: id.into(), title: title.into(), links: links.iter().map(|s| (*s).into()).collect(), tags: vec![], folder: String::new() }
+        NodeSpec {
+            id: id.into(),
+            title: title.into(),
+            links: links.iter().map(|s| (*s).into()).collect(),
+            tags: vec![],
+            folder: String::new(),
+        }
     }
 
     #[test]
     fn graph_limits_keep_connected_notes_and_count_backlinks() {
-        let mut settings = Settings::default();
-        settings.max_node = 2;
-        let graph = build_graph(&[spec("a", "A", &[]), spec("b", "B", &["C"]), spec("c", "C", &["B"])], &settings).unwrap();
+        let settings = Settings {
+            max_node: 2,
+            ..Default::default()
+        };
+        let graph = build_graph(
+            &[
+                spec("a", "A", &[]),
+                spec("b", "B", &["C"]),
+                spec("c", "C", &["B"]),
+            ],
+            &settings,
+        )
+        .unwrap();
         assert_eq!(graph.node_count(), 2);
         assert_eq!(graph.edge_count(), 1);
-        let graph = build_graph(&[spec("a", "A", &["Hub"]), spec("b", "B", &["Hub"]), spec("h", "Hub", &[])], &settings).unwrap();
+        let graph = build_graph(
+            &[
+                spec("a", "A", &["Hub"]),
+                spec("b", "B", &["Hub"]),
+                spec("h", "Hub", &[]),
+            ],
+            &settings,
+        )
+        .unwrap();
         assert!(graph.node_weights().any(|n| n.data.id == "h"));
     }
 
@@ -1088,7 +1136,16 @@ mod tests {
     fn minimum_links_prunes_low_degree_nodes_until_stable() {
         let mut settings = Settings::default();
         settings.filter.min_links = 2;
-        let graph = build_graph(&[spec("a", "A", &["B", "C"]), spec("b", "B", &["C"]), spec("c", "C", &["D"]), spec("d", "D", &[])], &settings).unwrap();
+        let graph = build_graph(
+            &[
+                spec("a", "A", &["B", "C"]),
+                spec("b", "B", &["C"]),
+                spec("c", "C", &["D"]),
+                spec("d", "D", &[]),
+            ],
+            &settings,
+        )
+        .unwrap();
         assert_eq!(graph.node_count(), 3);
         assert!(graph.node_weights().all(|n| n.data.link_count >= 2));
     }
@@ -1097,11 +1154,24 @@ mod tests {
     fn duplicate_titles_do_not_redirect_source_edges() {
         let mut settings = Settings::default();
         settings.filter.show_orphan = true;
-        let graph = build_graph(&[spec("a", "Same", &["B"]), spec("z", "Same", &[]), spec("b", "B", &[])], &settings).unwrap();
-        let a = graph.node_indices().find(|&i| graph[i].data.id == "a").unwrap();
-        let z = graph.node_indices().find(|&i| graph[i].data.id == "z").unwrap();
+        let graph = build_graph(
+            &[
+                spec("a", "Same", &["B"]),
+                spec("z", "Same", &[]),
+                spec("b", "B", &[]),
+            ],
+            &settings,
+        )
+        .unwrap();
+        let a = graph
+            .node_indices()
+            .find(|&i| graph[i].data.id == "a")
+            .unwrap();
+        let z = graph
+            .node_indices()
+            .find(|&i| graph[i].data.id == "z")
+            .unwrap();
         assert_eq!(graph.edges(a).count(), 1);
         assert_eq!(graph.edges(z).count(), 0);
     }
-
 }

@@ -15,13 +15,13 @@ mod physics;
 mod render;
 #[allow(dead_code)]
 mod settings;
+mod storage;
+#[cfg(test)]
+mod test_support;
 #[allow(dead_code)]
 mod theme;
 mod ui;
 mod util;
-mod storage;
-#[cfg(test)]
-mod test_support;
 #[allow(dead_code)]
 mod viewport;
 #[allow(dead_code)]
@@ -130,8 +130,12 @@ fn dispatch_action(
             }
         }
         EventAction::ReloadConfig => {
-            reload_config(app_state, config, reload_ctx.config_path.as_ref(), reload_ctx.cli);
-
+            reload_config(
+                app_state,
+                config,
+                reload_ctx.config_path.as_ref(),
+                reload_ctx.cli,
+            );
         }
     }
     Ok(())
@@ -183,7 +187,10 @@ fn handle_event(
         Event::Key(key) => {
             if !app_state.config_errors.is_empty() {
                 app_state.config_errors.clear();
-                if matches!(key.code, crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Esc) {
+                if matches!(
+                    key.code,
+                    crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Esc
+                ) {
                     return Ok(Some(EventAction::Quit));
                 }
                 return Ok(None);
@@ -453,14 +460,28 @@ fn apply_connection(
     })?;
 
     // 2. Keep the file list in sync until the next full rescan.
-    if let Some(f) = app_state.files.iter_mut().find(|f| f.relative_path == resolved_source) {
+    if let Some(f) = app_state
+        .files
+        .iter_mut()
+        .find(|f| f.relative_path == resolved_source)
+    {
         f.wikilinks = linker::extract_wikilinks(&new_content);
     }
-    let source_title = app_state.files.iter().find(|f| f.relative_path == resolved_source)
-        .map(|f| f.title.as_str()).unwrap_or_default();
+    let source_title = app_state
+        .files
+        .iter()
+        .find(|f| f.relative_path == resolved_source)
+        .map(|f| f.title.as_str())
+        .unwrap_or_default();
     let connected = app_state.files.iter().any(|f| {
-        f.relative_path == resolved_source && f.wikilinks.iter().any(|l| l.eq_ignore_ascii_case(&resolved_target))
-        || f.title.eq_ignore_ascii_case(&resolved_target) && f.wikilinks.iter().any(|l| l.eq_ignore_ascii_case(source_title))
+        f.relative_path == resolved_source
+            && f.wikilinks
+                .iter()
+                .any(|l| l.eq_ignore_ascii_case(&resolved_target))
+            || f.title.eq_ignore_ascii_case(&resolved_target)
+                && f.wikilinks
+                    .iter()
+                    .any(|l| l.eq_ignore_ascii_case(source_title))
     });
 
     // 3. Apply the edge to the live simulation (no rebuild: positions and
@@ -468,10 +489,15 @@ fn apply_connection(
     if let Some(gs) = app_state.graph_state.as_ref() {
         let mut g = gs.write();
         let graph = g.simulation.get_graph();
-        let src = graph.node_indices().find(|&i| graph[i].data.id == resolved_source);
-        let tgt = graph.node_indices().find(|&i| graph[i].data.title.eq_ignore_ascii_case(&resolved_target));
+        let src = graph
+            .node_indices()
+            .find(|&i| graph[i].data.id == resolved_source);
+        let tgt = graph
+            .node_indices()
+            .find(|&i| graph[i].data.title.eq_ignore_ascii_case(&resolved_target));
         if let (Some(s), Some(t)) = (src, tgt) {
             crate::graph::apply_connection_change(&mut g.simulation, s, t, connected);
+            g.reheat(0.4);
             let mut cache = g.render_cache.lock();
             cache.topology_dirty = true;
             cache.minimap_dirty = true;
@@ -641,7 +667,11 @@ fn frame_area(guard: &TerminalGuard) -> Result<ratatui::layout::Rect> {
     Ok(ratatui::layout::Rect::new(0, 0, size.width, size.height))
 }
 
-fn open_file_in_editor(base_dir: &std::path::Path, relative_path: &str, config: &config::GrafConfig) -> Result<()> {
+fn open_file_in_editor(
+    base_dir: &std::path::Path,
+    relative_path: &str,
+    config: &config::GrafConfig,
+) -> Result<()> {
     let full_path = storage::note_path(base_dir, relative_path)?;
 
     let editor = if let Some(cmd) = &config.editor.command {
@@ -654,7 +684,9 @@ fn open_file_in_editor(base_dir: &std::path::Path, relative_path: &str, config: 
         std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string())
     };
 
-    let status = std::process::Command::new(&editor).arg(&full_path).status()
+    let status = std::process::Command::new(&editor)
+        .arg(&full_path)
+        .status()
         .with_context(|| format!("failed to open editor '{editor}'"))?;
     anyhow::ensure!(status.success(), "editor exited with {status}");
     Ok(())
@@ -857,14 +889,45 @@ mod tests {
         std::fs::write(temp.path().join(".a.md.graf-save"), "another save").unwrap();
         assert!(apply_connection(&mut app, "a.md", "B", false).is_err());
         assert_eq!(app.files[0].wikilinks, ["B"]);
-        assert_eq!(app.graph_state.as_ref().unwrap().read().simulation.get_graph().edge_count(), 1);
+        assert_eq!(
+            app.graph_state
+                .as_ref()
+                .unwrap()
+                .read()
+                .simulation
+                .get_graph()
+                .edge_count(),
+            1
+        );
         std::fs::remove_file(temp.path().join(".a.md.graf-save")).unwrap();
         apply_connection(&mut app, "a.md", "B", false).unwrap();
         assert!(app.files[0].wikilinks.is_empty());
-        assert_eq!(app.graph_state.as_ref().unwrap().read().simulation.get_graph().edge_count(), 1);
+        assert_eq!(
+            app.graph_state
+                .as_ref()
+                .unwrap()
+                .read()
+                .simulation
+                .get_graph()
+                .edge_count(),
+            1
+        );
         apply_connection(&mut app, "a.md", "B", false).unwrap();
-        assert_eq!(app.graph_state.as_ref().unwrap().read().simulation.get_graph().edge_count(), 0);
-        assert!(!std::fs::read_to_string(temp.path().join("b.md")).unwrap().contains("[[A]]"));
+        assert_eq!(
+            app.graph_state
+                .as_ref()
+                .unwrap()
+                .read()
+                .simulation
+                .get_graph()
+                .edge_count(),
+            0
+        );
+        assert!(
+            !std::fs::read_to_string(temp.path().join("b.md"))
+                .unwrap()
+                .contains("[[A]]")
+        );
         app.shutdown();
     }
 
@@ -877,12 +940,19 @@ mod tests {
         let marker = temp.path().join("opened");
         let editor = temp.path().join("editor");
         std::fs::write(&note, "note").unwrap();
-        std::fs::write(&editor, format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", marker.display())).unwrap();
+        std::fs::write(
+            &editor,
+            format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", marker.display()),
+        )
+        .unwrap();
         std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut config = config::GrafConfig::default();
         config.editor.command = Some(editor.to_string_lossy().into_owned());
         open_file_in_editor(temp.path(), "note.md", &config).unwrap();
-        assert_eq!(std::fs::read_to_string(marker).unwrap(), note.canonicalize().unwrap().to_string_lossy());
+        assert_eq!(
+            std::fs::read_to_string(marker).unwrap(),
+            note.canonicalize().unwrap().to_string_lossy()
+        );
     }
 
     #[test]
@@ -891,9 +961,17 @@ mod tests {
         for (name, text) in [("a.md", "# A\n[[B]]\n"), ("b.md", "# B\n[[A]]\n")] {
             std::fs::write(temp.path().join(name), text).unwrap();
         }
-        let mut config = config::GrafConfig::default();
+        let mut config = config::GrafConfig {
+            max_node: 2,
+            ..Default::default()
+        };
         config.filter.show_orphan = true;
-        let mut app = app::AppState::new(&config, temp.path().into(), linker::scan_markdown_files(temp.path(), &[], 0), vec![]);
+        let mut app = app::AppState::new(
+            &config,
+            temp.path().into(),
+            linker::scan_markdown_files(temp.path(), &[], 0),
+            vec![],
+        );
         std::fs::write(temp.path().join("c.md"), "# C\n[[A]]\n").unwrap();
         apply_graph_action(GraphAction::Refresh, &mut app, &config);
         assert_eq!(app.files.len(), 3);
@@ -903,13 +981,25 @@ mod tests {
         new.max_node = 1;
         std::fs::write(&path, toml::to_string(&new).unwrap()).unwrap();
         reload_config(&mut app, &mut config, Some(&path), &cli);
-        assert_eq!(app.graph_state.as_ref().unwrap().read().simulation.get_graph().node_count(), 1);
+        assert_eq!(
+            app.graph_state
+                .as_ref()
+                .unwrap()
+                .read()
+                .simulation
+                .get_graph()
+                .node_count(),
+            1
+        );
         let old_state = app.graph_state.as_ref().unwrap().clone();
         old_state.read().render_cache.lock().topology_dirty = false;
         new.visual.theme = settings::Theme::Dracula;
         std::fs::write(&path, toml::to_string(&new).unwrap()).unwrap();
         reload_config(&mut app, &mut config, Some(&path), &cli);
-        assert!(std::sync::Arc::ptr_eq(&old_state, app.graph_state.as_ref().unwrap()));
+        assert!(std::sync::Arc::ptr_eq(
+            &old_state,
+            app.graph_state.as_ref().unwrap()
+        ));
         assert!(old_state.read().render_cache.lock().topology_dirty);
         assert_eq!(config.visual.theme, settings::Theme::Dracula);
         std::fs::write(&path, "invalid = [").unwrap();
@@ -925,7 +1015,13 @@ mod tests {
         assert!(cli::Cli::try_parse_from(["graf", "--label-mode", "missing"]).is_err());
         let cli = cli::Cli::try_parse_from(["graf", "--theme", "tokyo-night"]).unwrap();
         assert_eq!(cli.theme, Some(settings::Theme::TokyoNight));
-        assert_eq!(toml::from_str::<config::GrafConfig>("[visual]\ntheme = 'catppuccin-mocha'").unwrap().visual.theme, settings::Theme::CatppuccinMocha);
+        assert_eq!(
+            toml::from_str::<config::GrafConfig>("[visual]\ntheme = 'catppuccin-mocha'")
+                .unwrap()
+                .visual
+                .theme,
+            settings::Theme::CatppuccinMocha
+        );
     }
 
     #[test]
@@ -936,14 +1032,23 @@ mod tests {
             .env("GRAF_VISUAL_THEME", "dracula")
             .env("GRAF_FILTER_MAX_NODES", "7")
             .env_remove("GRAF_MAX_NODE")
-            .output().unwrap();
-        assert!(output.status.success(), "{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
     fn environment_overrides_cli_child() {
-        if std::env::var_os("GRAF_TEST_ENV_PRECEDENCE").is_none() { return; }
-        let cli = cli::Cli::try_parse_from(["graf", "--theme", "onedark", "--max-nodes", "2"]).unwrap();
+        if std::env::var_os("GRAF_TEST_ENV_PRECEDENCE").is_none() {
+            return;
+        }
+        let cli =
+            cli::Cli::try_parse_from(["graf", "--theme", "onedark", "--max-nodes", "2"]).unwrap();
         let mut config = config::GrafConfig::default();
         apply_cli_overrides(&mut config, &cli);
         assert_eq!(config.visual.theme, settings::Theme::Dracula);

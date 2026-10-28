@@ -127,6 +127,7 @@ pub fn simulation_step(state: &mut GraphState, timestep: f32) {
 
     let graph = state.simulation.get_graph();
     state.graph_bounds = crate::render::compute_graph_bounds(graph);
+    state.render_cache.lock().minimap_dirty = true;
 
     // Temperature decays towards 0 (mathematical energy minimum)
     state.alpha *= 0.95;
@@ -239,7 +240,13 @@ pub fn start_physics(
                 physics_tick(&mut guard, &physics, &mut iterations, &mut previous_alpha);
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+            match kill_rx.recv_timeout(std::time::Duration::from_millis(sleep_ms)) {
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    state_clone.write().physics_worker_active = false;
+                    break;
+                }
+            }
         }
     });
 
@@ -690,7 +697,9 @@ mod tests {
         config.timestep = 0.02;
         let mut iterations = 0;
         let mut previous = 0.0;
-        for _ in 0..3 { physics_tick(&mut state, &config, &mut iterations, &mut previous); }
+        for _ in 0..3 {
+            physics_tick(&mut state, &config, &mut iterations, &mut previous);
+        }
         assert_eq!(iterations, 2);
         assert!(state.is_settled);
         state.reheat(0.4);
@@ -722,5 +731,22 @@ mod tests {
         assert_eq!(force.dict["Repulsive Force"].bool(), Some(false));
         assert_eq!(simulation.parameters().node_start_size, 200.0);
     }
-
+    #[test]
+    fn stopping_interrupts_a_long_configured_sleep() {
+        let state = Arc::new(RwLock::new(setup_mock_graph(&[("a", &["b"]), ("b", &[])])));
+        let mut settings = Settings::default();
+        settings.physics.thread_sleep_ms = 60_000;
+        let initial_alpha = state.read().alpha;
+        let sender = start_physics(state.clone(), &settings).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while state.read().alpha == initial_alpha && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(state.read().alpha < initial_alpha);
+        sender.send(()).unwrap();
+        while state.read().physics_worker_active && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(!state.read().physics_worker_active);
+    }
 }

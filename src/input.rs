@@ -104,10 +104,11 @@ pub fn apply_action(
         AutoFit => {
             let padding = auto_fit_padding(settings);
             let area = guard.render_cache.lock().canvas_area;
-            let vp = guard
-                .viewport
-                .clone()
-                .auto_fit_from_graph_in_area(guard.simulation.get_graph(), padding, area);
+            let vp = guard.viewport.clone().auto_fit_from_graph_in_area(
+                guard.simulation.get_graph(),
+                padding,
+                area,
+            );
             guard.viewport = vp;
             None
         }
@@ -1025,14 +1026,28 @@ mod tests {
         let state = setup_mock_graph_state(&[("a", &[])]);
         let mut settings = Settings::default();
         settings.visual.show_minimap = true;
-        let flags = crate::render::FeatureFlags { show_minimap: false, show_legend: false, grid: false, show_status_bar: false };
+        let flags = crate::render::FeatureFlags {
+            show_minimap: false,
+            show_legend: false,
+            grid: false,
+            show_status_bar: false,
+        };
         let area = Rect::new(0, 0, 80, 24);
         let minimap = crate::render::compute_minimap_area(area, &settings);
         let mut mouse = GraphMouseState::default();
-        handle_graph_mouse_with_flags(&state, MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left), column: minimap.x + 2,
-            row: minimap.y + 2, modifiers: KeyModifiers::NONE,
-        }, area, &mut mouse, &settings, &flags);
+        handle_graph_mouse_with_flags(
+            &state,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: minimap.x + 2,
+                row: minimap.y + 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+            &mut mouse,
+            &settings,
+            &flags,
+        );
         assert!(!mouse.is_minimap_dragging);
     }
 
@@ -1048,13 +1063,37 @@ mod tests {
             }
             g.simulation.get_graph().node_indices().collect()
         };
-        let mut mouse = GraphMouseState { last_click_time: Some(Instant::now()), last_clicked_node: Some(ids[0]), ..Default::default() };
+        let mut mouse = GraphMouseState {
+            last_click_time: Some(Instant::now()),
+            last_clicked_node: Some(ids[0]),
+            ..Default::default()
+        };
         let settings = Settings::default();
-        let click = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 49, row: 12, modifiers: KeyModifiers::NONE };
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 49,
+            row: 12,
+            modifiers: KeyModifiers::NONE,
+        };
         let area = Rect::new(0, 0, 80, 24);
-        assert_eq!(handle_graph_mouse(&state, click, area, &mut mouse, &settings, false), None);
-        handle_graph_mouse(&state, MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), ..click }, area, &mut mouse, &settings, false);
-        assert_eq!(handle_graph_mouse(&state, click, area, &mut mouse, &settings, false), Some(GraphAction::OpenFile("b".into())));
+        assert_eq!(
+            handle_graph_mouse(&state, click, area, &mut mouse, &settings, false),
+            None
+        );
+        handle_graph_mouse(
+            &state,
+            MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                ..click
+            },
+            area,
+            &mut mouse,
+            &settings,
+            false,
+        );
+        assert_eq!(
+            handle_graph_mouse(&state, click, area, &mut mouse, &settings, false),
+            Some(GraphAction::OpenFile("b".into()))
+        );
     }
-
 }
