@@ -4,6 +4,7 @@ pub mod graph;
 pub mod linker;
 pub mod settings;
 pub mod theme;
+mod util;
 
 // Placeholder modules that will be ported in next steps
 pub mod input;
@@ -12,7 +13,7 @@ pub mod render;
 pub mod viewport;
 pub use input::{
     GraphAction, GraphKeymap, GraphMouseState, MouseAction, apply_action, handle_graph_keys,
-    handle_graph_mouse, handle_graph_mouse_by_id,
+    handle_graph_mouse, handle_graph_mouse_by_id, handle_graph_mouse_by_id_with_flags,
 };
 pub use physics::{simulation_step, start_physics};
 pub use render::{

@@ -73,9 +73,10 @@ impl AppState {
         let kill_tx = crate::physics::start_physics(state.clone(), config);
         let auto_fit_baseline = {
             let mut guard = state.write();
-            let vp = guard
-                .viewport
-                .auto_fit_from_graph(guard.simulation.get_graph(), 1.4);
+            let vp = guard.viewport.auto_fit_from_graph(
+                guard.simulation.get_graph(),
+                config.interaction.auto_fit_padding,
+            );
             guard.viewport = vp;
             Some((
                 guard.viewport.center_x,
@@ -113,16 +114,45 @@ impl AppState {
 
     /// Per-frame: fit the viewport to the graph once physics settles, unless the
     /// user already moved the camera.
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, config: &GrafConfig) {
         if let (Some(baseline), Some(state)) = (self.auto_fit_baseline, &self.graph_state) {
             let mut guard = state.write();
             let vp = &guard.viewport;
             if (vp.center_x, vp.center_y, vp.zoom) != baseline {
                 self.auto_fit_baseline = None;
             } else if guard.is_settled {
-                let fitted = vp.auto_fit_from_graph(guard.simulation.get_graph(), 1.4);
+                let area = guard.render_cache.lock().canvas_area;
+                let fitted = vp.auto_fit_from_graph_in_area(
+                    guard.simulation.get_graph(),
+                    config.interaction.auto_fit_padding,
+                    area,
+                );
                 guard.viewport = fitted;
                 self.auto_fit_baseline = None;
+            }
+        }
+    }
+
+    pub fn resize_view(&mut self, area: ratatui::layout::Rect, config: &GrafConfig) {
+        if let (Some(baseline), Some(state)) = (self.auto_fit_baseline, &self.graph_state) {
+            let mut guard = state.write();
+            if guard.render_cache.lock().canvas_area != area
+                && (
+                    guard.viewport.center_x,
+                    guard.viewport.center_y,
+                    guard.viewport.zoom,
+                ) == baseline
+            {
+                guard.viewport = guard.viewport.auto_fit_from_graph_in_area(
+                    guard.simulation.get_graph(),
+                    config.interaction.auto_fit_padding,
+                    area,
+                );
+                self.auto_fit_baseline = Some((
+                    guard.viewport.center_x,
+                    guard.viewport.center_y,
+                    guard.viewport.zoom,
+                ));
             }
         }
     }
@@ -136,6 +166,8 @@ impl AppState {
         let mut effective = config.clone();
         if self.focus_note_ids.is_some() {
             effective.filter.show_orphan = true;
+            effective.filter.min_links = 0;
+            effective.max_node = 0;
         }
         let (links, errors) = resolve_note_links(&self.files, config.parsing.link_resolution);
         self.link_errors = errors;
@@ -147,8 +179,32 @@ impl AppState {
             .expect("Failed to build graph");
         let state = Arc::new(RwLock::new(graph_state));
         let kill_tx = crate::physics::start_physics(state.clone(), &effective);
+        let baseline = {
+            let guard = state.read();
+            (
+                guard.viewport.center_x,
+                guard.viewport.center_y,
+                guard.viewport.zoom,
+            )
+        };
+        if self.focus_note_ids.is_some() {
+            let mode = self
+                .graph_state
+                .as_ref()
+                .and_then(|s| s.read().mode_banner)
+                .filter(|m| {
+                    matches!(
+                        m,
+                        crate::graph::ModeBanner::LocalGraph
+                            | crate::graph::ModeBanner::GroupedGraph
+                    )
+                });
+            state.write().mode_banner = mode;
+        }
         self.graph_state = Some(state);
         self.graph_kill_tx = kill_tx;
+        self.auto_fit_baseline = Some(baseline);
+        self.graph_mouse_state = GraphMouseState::default();
         // Clear search state — old NodeIndex values are invalid in the new graph
         self.search_results.clear();
         self.search_selected = 0;
@@ -177,26 +233,34 @@ impl AppState {
         } else {
             vec![(source, target), (target, source)]
         };
-        for (source, target) in pairs {
-            let index = self
-                .files
-                .iter()
-                .position(|n| n.data.relative_path == source)
-                .ok_or_else(|| anyhow::anyhow!("source note no longer exists"))?;
-            let path = self.base_dir.join(source);
-            let content = std::fs::read_to_string(&path)?;
-            let updated = crate::document::edit_connection(
-                &content,
-                source,
-                target,
-                &self.files,
-                &config.parsing,
-                create,
-            )?;
-            if updated != content {
-                crate::document::save_note(&self.base_dir, source, &content, &updated)?;
+        let result = (|| -> anyhow::Result<()> {
+            for (source, target) in pairs {
+                let index = self
+                    .files
+                    .iter()
+                    .position(|n| n.data.relative_path == source)
+                    .ok_or_else(|| anyhow::anyhow!("source note no longer exists"))?;
+                let path = crate::document::note_path(&self.base_dir, source)?;
+                let content = std::fs::read_to_string(&path)?;
+                let updated = crate::document::edit_connection(
+                    &content,
+                    source,
+                    target,
+                    &self.files,
+                    &config.parsing,
+                    create,
+                )?;
+                let parsed = crate::document::parse_note(&updated, source, &config.parsing)?;
+                if updated != content {
+                    crate::document::save_note(&self.base_dir, source, &content, &updated)?;
+                }
+                self.files[index] = parsed;
             }
-            self.files[index] = crate::document::parse_note(&updated, source, &config.parsing)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.rescan(config);
+            return Err(error);
         }
         let (links, errors) = resolve_note_links(&self.files, config.parsing.link_resolution);
         self.link_errors = errors;
@@ -213,6 +277,7 @@ impl AppState {
             let tgt = graph.node_indices().find(|&i| graph[i].data.id == target);
             if let (Some(src), Some(tgt)) = (src, tgt) {
                 crate::graph::apply_connection_change(&mut guard.simulation, src, tgt, connected);
+                guard.reheat(0.4);
                 let mut cache = guard.render_cache.lock();
                 cache.topology_dirty = true;
                 cache.minimap_dirty = true;
@@ -356,6 +421,45 @@ mod tests {
         assert!(app.files.iter().all(|n| n.links.is_empty()));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "# Source\n");
         std::fs::set_permissions(path, permissions).unwrap();
+        app.shutdown();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn partial_reciprocal_delete_rescans_the_remaining_disk_link() {
+        let notebook = Notebook::new();
+        notebook.write("a.md", "# A\n[[b]]\n");
+        notebook.write("b.md", "# B\n[[a]]\n");
+        let (mut app, config) = app(&notebook);
+        let path = notebook.0.join("b.md");
+        let original = std::fs::metadata(&path).unwrap().permissions();
+        let mut readonly = original.clone();
+        readonly.set_readonly(true);
+        std::fs::set_permissions(&path, readonly).unwrap();
+        assert!(app.edit_connection(&config, "a.md", "b.md", false).is_err());
+        assert!(
+            !std::fs::read_to_string(notebook.0.join("a.md"))
+                .unwrap()
+                .contains("[[b]]")
+        );
+        assert_eq!(edges(&app), 1);
+        assert!(
+            app.files
+                .iter()
+                .find(|n| n.data.relative_path == "a.md")
+                .unwrap()
+                .links
+                .is_empty()
+        );
+        assert_eq!(
+            app.files
+                .iter()
+                .find(|n| n.data.relative_path == "b.md")
+                .unwrap()
+                .links
+                .len(),
+            1
+        );
+        std::fs::set_permissions(path, original).unwrap();
         app.shutdown();
     }
 }

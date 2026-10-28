@@ -512,23 +512,39 @@ pub fn edit_connection(
     Ok(updated)
 }
 
-/// Replace a note atomically, refusing paths outside the notebook and stale edits.
-pub fn save_note(base: &Path, id: &str, original: &str, updated: &str) -> Result<()> {
-    use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-    let root = base.canonicalize()?;
-    let path = root.join(id).canonicalize()?;
+pub(crate) fn note_path(base: &Path, relative: &str) -> Result<std::path::PathBuf> {
+    let base = base
+        .canonicalize()
+        .context("cannot resolve note directory")?;
+    let path = base
+        .join(relative)
+        .canonicalize()
+        .context("cannot resolve note path")?;
     anyhow::ensure!(
-        path.starts_with(&root),
-        "refusing to edit a note outside the notebook"
+        path.starts_with(&base) && path.is_file(),
+        "note is outside the scan directory or not a file"
     );
+    Ok(path)
+}
+
+/// Replace a note atomically, refusing paths outside the notebook and stale edits.
+pub fn save_note(base: &Path, relative: &str, original: &str, updated: &str) -> Result<()> {
+    use std::io::Write;
+    let path = note_path(base, relative)?;
     let permissions = std::fs::metadata(&path)?.permissions();
     anyhow::ensure!(!permissions.readonly(), "note is read-only");
-    let temp = path.with_file_name(format!(
-        ".graf-{}-{}.tmp",
-        std::process::id(),
-        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+    let replacement = updated;
+    if replacement == original {
+        anyhow::ensure!(
+            std::fs::read_to_string(&path)? == original,
+            "note changed on disk; refresh and retry"
+        );
+        return Ok(());
+    }
+
+    let staged = path.with_file_name(format!(
+        ".{}.graf-save",
+        path.file_name().unwrap().to_string_lossy()
     ));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -537,24 +553,30 @@ pub fn save_note(base: &Path, id: &str, original: &str, updated: &str) -> Result
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
+    // The staging file also excludes another graf writer; never overwrite it.
     let mut file = options
-        .open(&temp)
-        .context("cannot create temporary note")?;
-    let result = (|| -> Result<()> {
-        file.write_all(updated.as_bytes())?;
-        file.sync_all()?;
+        .open(&staged)
+        .context("cannot stage note; another save or a stale .graf-save file exists")?;
+    let mut renamed = false;
+    let result = (|| {
+        file.write_all(replacement.as_bytes())?;
         file.set_permissions(permissions)?;
+        file.sync_all()?;
+        // shortcut: external editors may race the final check; transactional hosts need shared locking.
         anyhow::ensure!(
             std::fs::read_to_string(&path)? == original,
-            "note changed on disk; refresh and retry"
+            "note changed during save; retry after refreshing"
         );
-        std::fs::rename(&temp, &path).context("cannot replace note")?;
+        std::fs::rename(&staged, &path)?;
+        renamed = true;
+        #[cfg(unix)]
+        std::fs::File::open(path.parent().unwrap())?.sync_all()?;
         Ok(())
     })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
+    if !renamed {
+        let _ = std::fs::remove_file(&staged);
     }
-    result
+    result.context("cannot save note")
 }
 
 #[cfg(test)]
@@ -579,6 +601,10 @@ pub(crate) mod test_support {
             std::fs::create_dir_all(&path).unwrap();
             Self(path)
         }
+        pub fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+
         pub fn write(&self, id: &str, content: &str) {
             let path = self.0.join(id);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -935,6 +961,27 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(outside.0.join("other.md")).unwrap(),
             "outside"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cleanup_save_tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_save_does_not_overwrite_another_stage() {
+        let notebook = test_support::Notebook::new();
+        notebook.write("a.md", "original");
+        notebook.write(".a.md.graf-save", "another writer");
+        assert!(save_note(&notebook.0, "a.md", "original", "bad").is_err());
+        assert_eq!(
+            std::fs::read_to_string(notebook.0.join("a.md")).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            std::fs::read_to_string(notebook.0.join(".a.md.graf-save")).unwrap(),
+            "another writer"
         );
     }
 }

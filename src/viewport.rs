@@ -97,6 +97,17 @@ impl Viewport {
         graph: &fdg_sim::ForceGraph<crate::graph::GraphNodeData, ()>,
         auto_fit_padding: f64,
     ) -> Viewport {
+        self.auto_fit_from_graph_in_area(graph, auto_fit_padding, Rect::new(0, 0, 80, 40))
+    }
+
+    /// Fit using the actual canvas dimensions; the legacy helper assumes 2:1.
+    #[must_use]
+    pub fn auto_fit_from_graph_in_area(
+        &self,
+        graph: &fdg_sim::ForceGraph<crate::graph::GraphNodeData, ()>,
+        auto_fit_padding: f64,
+        area: Rect,
+    ) -> Viewport {
         let mut vp = self.clone();
         if graph.node_count() == 0 {
             return Viewport::default();
@@ -121,8 +132,16 @@ impl Viewport {
 
         let range_x = (max_x - min_x).max(1.0);
         let range_y = (max_y - min_y).max(1.0);
-        let range = range_x.max(range_y) * auto_fit_padding;
-        let full_zoom = 200.0 / range;
+        let padding = if auto_fit_padding.is_finite() && auto_fit_padding >= 1.0 {
+            auto_fit_padding
+        } else {
+            1.4
+        };
+        let aspect = area.width.max(1) as f64 / area.height.max(1) as f64;
+        let full_zoom = (50.0 * aspect / range_x).min(100.0 / range_y) / padding;
+        if !full_zoom.is_finite() || full_zoom <= 0.0 {
+            return self.clone();
+        }
         vp.zoom = full_zoom;
         vp.auto_fit_zoom = full_zoom;
         vp
@@ -611,5 +630,26 @@ mod tests {
             vp_zoom_in.hit_test(50000.0, 50000.0, &gs, &config, area, max_lc),
             None
         );
+    }
+
+    #[test]
+    fn auto_fit_contains_nodes_in_wide_and_tall_canvases() {
+        let (state, _) = make_state(&[(-100.0, -50.0, 0), (100.0, 50.0, 0)]);
+        for area in [
+            Rect::new(0, 0, 80, 24),
+            Rect::new(0, 0, 24, 80),
+            Rect::new(0, 0, 1, 1),
+        ] {
+            let vp = Viewport::default().auto_fit_from_graph_in_area(
+                state.simulation.get_graph(),
+                1.4,
+                area,
+            );
+            let aspect = area.width as f64 / area.height as f64;
+            let xb = vp.x_bounds(aspect);
+            let yb = vp.y_bounds(aspect);
+            assert!(xb[0] < -100.0 && xb[1] > 100.0);
+            assert!(yb[0] < -50.0 && yb[1] > 50.0);
+        }
     }
 }

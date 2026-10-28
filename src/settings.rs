@@ -36,12 +36,15 @@ impl std::fmt::Display for Background {
 pub enum Theme {
     #[default]
     Default,
+    #[serde(alias = "tokyo-night")]
     TokyoNight,
+    #[serde(alias = "catppuccin-mocha")]
     CatppuccinMocha,
     Onedark,
     Gruvbox,
     Dracula,
     Nord,
+    #[serde(alias = "rose-pine")]
     RosePine,
     Everforest,
     Kanagawa,
@@ -52,7 +55,7 @@ impl FromStr for Theme {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
+        match s.to_lowercase().replace('-', "_").as_str() {
             "default" => Ok(Theme::Default),
             "tokyo_night" | "tokyonight" => Ok(Theme::TokyoNight),
             "catppuccin_mocha" | "catppuccinmocha" => Ok(Theme::CatppuccinMocha),
@@ -379,6 +382,7 @@ pub struct VisualConfig {
     #[serde(default)]
     pub colors: ColorOverrides,
     // Graf-only fields
+    /// Legacy compatibility field; the grid now adapts to zoom.
     pub grid_divisions: usize,
 }
 
@@ -457,6 +461,7 @@ pub struct InteractionConfig {
     pub drag_sensitivity: f64,
     // Graf-only fields
     pub double_click_ms: u64,
+    /// Legacy compatibility field; panning now uses canvas dimensions.
     pub drag_scale: f64,
     pub auto_fit_padding: f64,
 }
@@ -479,6 +484,7 @@ pub struct FilterConfig {
     #[serde(default)]
     pub exclude_tags: Vec<String>,
     pub min_links: usize,
+    /// Legacy compatibility field; use Settings::max_node.
     pub max_nodes: usize,
     #[serde(default)]
     pub show_orphan: bool,
@@ -495,6 +501,7 @@ pub struct SearchConfig {
     // Graf-only fields
     pub popup_width: u16,
     pub popup_y: u16,
+    /// Legacy compatibility field; search highlights the character under the cursor.
     pub cursor_glyph: String,
 }
 
@@ -559,6 +566,7 @@ pub struct DisplayConfig {
     #[serde(default)]
     pub border_style: BorderStyle,
     #[serde(default = "default_border_title")]
+    /// Legacy compatibility field; the graph canvas has no title border.
     pub border_title: String,
 }
 
@@ -750,7 +758,7 @@ impl<'de> serde::Deserialize<'de> for ColorOverrides {
 
 pub fn parse_hex_color(s: &str) -> Option<Color> {
     let s = s.strip_prefix('#')?;
-    if s.len() == 6 {
+    if s.len() == 6 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
         let r = u8::from_str_radix(&s[0..2], 16).ok()?;
         let g = u8::from_str_radix(&s[2..4], 16).ok()?;
         let b = u8::from_str_radix(&s[4..6], 16).ok()?;
@@ -770,5 +778,17 @@ where
         Some(s) => parse_hex_color(&s)
             .map(Some)
             .ok_or_else(|| serde::de::Error::custom(format!("invalid hex color: {}", s))),
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+
+    #[test]
+    fn hex_colors_reject_non_ascii_without_panicking() {
+        assert_eq!(parse_hex_color("#a€bc"), None);
+        assert_eq!(parse_hex_color("#12xy34"), None);
+        assert_eq!(parse_hex_color("#12abEF"), Some(Color::Rgb(18, 171, 239)));
     }
 }
