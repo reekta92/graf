@@ -83,6 +83,24 @@ https://github.com/user-attachments/assets/de06ffda-a1f6-4317-9cd2-f7a222c13f18
 cargo install graf-rs --locked
 ```
 
+### Nix
+
+With the `nix-command` and `flakes` experimental features enabled:
+
+```sh
+nix run github:reekta92/graf
+nix profile install github:reekta92/graf
+```
+
+The flake supports `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`.
+Its pinned nixpkgs no longer supports Intel macOS. Package versions come from
+`Cargo.toml`, and dependencies come from the committed `Cargo.lock`.
+
+From a checkout, run `nix flake check --all-systems --no-build` to evaluate all
+outputs and `nix flake check` to build, run the Rust tests, and check the installed
+command on the native platform. `nix develop` provides the Rust toolchain.
+The Nix workflow runs these checks on native Linux and macOS runners.
+
 ### From source
 
 ```bash
