@@ -381,6 +381,8 @@ pub struct VisualConfig {
     pub looking_glass_height: u16,
     #[serde(default)]
     pub colors: ColorOverrides,
+    #[serde(default)]
+    pub show_edge_arrows: bool,
     // Graf-only fields
     /// Legacy compatibility field; the grid now adapts to zoom.
     pub grid_divisions: usize,
@@ -416,6 +418,7 @@ impl Default for VisualConfig {
             looking_glass_height: 12,
             colors: ColorOverrides::default(),
             grid_divisions: 10,
+            show_edge_arrows: false,
         }
     }
 }
@@ -655,6 +658,7 @@ pub struct ColorOverrides {
     pub legend_text_color: Option<Color>,
     pub status_bar_color: Option<Color>,
     pub background_color: Option<Color>,
+    pub arrow_color: Option<Color>,
 }
 
 impl serde::Serialize for ColorOverrides {
@@ -664,7 +668,7 @@ impl serde::Serialize for ColorOverrides {
     {
         use serde::ser::SerializeStruct;
 
-        let mut s = serializer.serialize_struct("ColorOverrides", 10)?;
+        let mut s = serializer.serialize_struct("ColorOverrides", 11)?;
 
         fn fmt_color(c: &Color) -> String {
             if let Color::Rgb(r, g, b) = c {
@@ -704,6 +708,9 @@ impl serde::Serialize for ColorOverrides {
         if let Some(ref v) = self.background_color {
             s.serialize_field("background_color", &fmt_color(v))?;
         }
+        if let Some(ref v) = self.arrow_color {
+            s.serialize_field("arrow_color", &fmt_color(v))?;
+        }
 
         s.end()
     }
@@ -736,6 +743,8 @@ impl<'de> serde::Deserialize<'de> for ColorOverrides {
             status_bar_color: Option<Color>,
             #[serde(default, deserialize_with = "deserialize_optional_color")]
             background_color: Option<Color>,
+            #[serde(default, deserialize_with = "deserialize_optional_color")]
+            arrow_color: Option<Color>,
         }
 
         let raw = ColorOverridesRaw::deserialize(deserializer)?;
@@ -750,6 +759,7 @@ impl<'de> serde::Deserialize<'de> for ColorOverrides {
             legend_text_color: raw.legend_text_color,
             status_bar_color: raw.status_bar_color,
             background_color: raw.background_color,
+            arrow_color: raw.arrow_color,
         })
     }
 }

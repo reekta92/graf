@@ -98,11 +98,15 @@ enum EventAction {
     Quit,
     OpenFile(String),
     ReloadConfig,
+    OpenWebView,
+    CreateNote(String),
+    RenameNote { from: String, to: String },
 }
 
 struct ReloadCtx<'a> {
     config_path: &'a Option<std::path::PathBuf>,
     cli: &'a cli::Cli,
+    cwd: &'a std::path::PathBuf,
 }
 
 fn dispatch_action(
@@ -127,6 +131,127 @@ fn dispatch_action(
                 app_state.config_reload_ttl = 180;
             } else {
                 app_state.rescan(config);
+            }
+        }
+        EventAction::OpenWebView => {
+            guard.suspend()?;
+            let cwd = reload_ctx.cwd.clone();
+            let patterns = config.filter.exclude_patterns.clone();
+            match spawn_web_view(
+                &cwd,
+                &patterns,
+                config.visual.show_edge_arrows,
+                config.visual.colors.arrow_color,
+            ) {
+                Ok(_) => {
+                    app_state.config_reload_msg = Some(
+                        "Web view: http://127.0.0.1:8765/ (close the graf-web process to stop)"
+                            .into(),
+                    );
+                    app_state.config_reload_ttl = 120;
+                }
+                Err(error) => {
+                    app_state.config_reload_msg = Some(format!(
+                        "Could not open web view: {error}. Install graf-web or run graf --web."
+                    ));
+                    app_state.config_reload_ttl = 240;
+                }
+            }
+            guard.resume()?;
+        }
+        EventAction::CreateNote(rel_path) => {
+            let rel_path = if rel_path.ends_with(".md") || rel_path.ends_with(".mdx") {
+                rel_path
+            } else {
+                format!("{rel_path}.md")
+            };
+            if rel_path.split('/').any(|c| c == "..") {
+                app_state.config_reload_msg = Some("Invalid path".to_string());
+                app_state.config_reload_ttl = 90;
+                return Ok(());
+            }
+            let full_path = reload_ctx.cwd.join(&rel_path);
+            if full_path.exists() {
+                app_state.config_reload_msg = Some(format!("{rel_path}: already exists"));
+                app_state.config_reload_ttl = 120;
+                return Ok(());
+            }
+            let stem = std::path::Path::new(&rel_path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "New Note".to_string());
+            match std::fs::write(&full_path, format!("# {stem}\n")) {
+                Ok(()) => {
+                    app_state.rescan(config);
+                    app_state.config_reload_msg = Some(format!("Created {rel_path}"));
+                    app_state.config_reload_ttl = 90;
+                }
+                Err(e) => {
+                    app_state.config_reload_msg = Some(format!("Could not create: {e}"));
+                    app_state.config_reload_ttl = 120;
+                }
+            }
+        }
+        EventAction::RenameNote { from, to } => {
+            let to = if to.ends_with(".md") || to.ends_with(".mdx") {
+                to
+            } else {
+                format!("{to}.md")
+            };
+            if to.split('/').any(|c| c == "..") {
+                app_state.config_reload_msg = Some("Invalid path".to_string());
+                app_state.config_reload_ttl = 90;
+                return Ok(());
+            }
+            let src = reload_ctx.cwd.join(&from);
+            let dst = reload_ctx.cwd.join(&to);
+            if dst.exists() {
+                app_state.config_reload_msg = Some(format!("{to}: already exists"));
+                app_state.config_reload_ttl = 120;
+                return Ok(());
+            }
+            match std::fs::rename(&src, &dst) {
+                Ok(()) => {
+                    let old_stem = std::path::Path::new(&from)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let new_stem = std::path::Path::new(&to)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !old_stem.eq_ignore_ascii_case(&new_stem) {
+                        // Rewrite wikilinks in all other notes
+                        if let Ok(entries) = std::fs::read_dir(reload_ctx.cwd) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path == dst {
+                                    continue;
+                                }
+                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                                if ext == "md" || ext == "mdx" {
+                                    if let Ok(content) = std::fs::read_to_string(&path) {
+                                        let updated = crate::wikilink::rename_wikilinks(
+                                            &content,
+                                            &old_stem,
+                                            &new_stem,
+                                        );
+                                        if updated != content {
+                                            let _ = std::fs::write(&path, updated);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    app_state.rescan(config);
+                    app_state.config_reload_msg = Some(format!("Moved to {to}"));
+                    app_state.config_reload_ttl = 90;
+                }
+                Err(e) => {
+                    app_state.config_reload_msg = Some(format!("Could not move: {e}"));
+                    app_state.config_reload_ttl = 120;
+                }
             }
         }
         EventAction::ReloadConfig => {
@@ -197,6 +322,12 @@ fn handle_event(
                     return Ok(Some(EventAction::Quit));
                 }
                 return Ok(None);
+            }
+            if app_state.create_note_active {
+                return Ok(handle_create_note_keys(app_state, key));
+            }
+            if app_state.rename_note_active {
+                return Ok(handle_rename_note_keys(app_state, key));
             }
             if app_state.show_help {
                 if key.code == crossterm::event::KeyCode::Esc
@@ -311,6 +442,31 @@ fn apply_graph_action(
             app_state.exit_focus(config);
             None
         }
+        GraphAction::FocusNeighborhood => {
+            focus_neighborhood(app_state, config);
+            None
+        }
+        GraphAction::OpenWebView => Some(EventAction::OpenWebView),
+        GraphAction::CreateNote => {
+            app_state.create_note_active = true;
+            app_state.create_note_input.clear();
+            app_state.create_note_cursor = 0;
+            None
+        }
+        GraphAction::RenameNote => {
+            let path = app_state.graph_state.as_ref().and_then(|gs| {
+                let g = gs.read();
+                g.selection.primary.and_then(|idx| {
+                    g.simulation.get_graph().node_weight(idx).map(|n| n.data.id.clone())
+                })
+            });
+            if let Some(path) = path {
+                app_state.rename_note_active = true;
+                app_state.rename_note_cursor = path.len();
+                app_state.rename_note_input = path;
+            }
+            None
+        }
         // Preview/looking-glass are clin-host features.
         GraphAction::TogglePreview | GraphAction::ToggleLookingGlass => None,
         // Stateful actions are consumed inside the engine.
@@ -347,28 +503,7 @@ fn execute_menu_action(
             }
         }
         MenuItem::LocalGraph => {
-            let ids: std::collections::HashSet<String> = {
-                let Some(gs) = &app_state.graph_state else {
-                    return;
-                };
-                let g = gs.read();
-                let mut ids = std::collections::HashSet::new();
-                if let Some(anchor) = g.selection.primary {
-                    let graph_ref = g.simulation.get_graph();
-                    if let Some(n) = graph_ref.node_weight(anchor) {
-                        ids.insert(n.data.id.clone());
-                    }
-                    for nbr in graph_ref.neighbors(anchor) {
-                        if let Some(n) = graph_ref.node_weight(nbr) {
-                            ids.insert(n.data.id.clone());
-                        }
-                    }
-                }
-                ids
-            };
-            if !ids.is_empty() {
-                app_state.enter_focus(config, ids, ModeBanner::LocalGraph);
-            }
+            focus_neighborhood(app_state, config);
         }
         MenuItem::ShowGroup => {
             let ids: std::collections::HashSet<String> = {
@@ -420,6 +555,31 @@ fn execute_menu_action(
     }
 }
 
+fn focus_neighborhood(app_state: &mut app::AppState, config: &config::GrafConfig) {
+    let ids: std::collections::HashSet<String> = {
+        let Some(gs) = &app_state.graph_state else {
+            return;
+        };
+        let g = gs.read();
+        let mut ids = std::collections::HashSet::new();
+        if let Some(anchor) = g.selection.primary {
+            let graph_ref = g.simulation.get_graph();
+            if let Some(node) = graph_ref.node_weight(anchor) {
+                ids.insert(node.data.id.clone());
+            }
+            for neighbor in graph_ref.neighbors(anchor) {
+                if let Some(node) = graph_ref.node_weight(neighbor) {
+                    ids.insert(node.data.id.clone());
+                }
+            }
+        }
+        ids
+    };
+    if !ids.is_empty() {
+        app_state.enter_focus(config, ids, crate::graph::ModeBanner::LocalGraph);
+    }
+}
+
 fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
     if let Some(value) = &cli.theme {
         config.visual.theme = value.clone();
@@ -466,6 +626,14 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
     if let Some(ref editor) = cli.editor {
         config.editor.command = Some(editor.clone());
     }
+    if cli.with_arrows {
+        config.visual.show_edge_arrows = true;
+    }
+    if let Some(ref color) = cli.arrow_color {
+        if let Some(color) = settings::parse_hex_color(color) {
+            config.visual.colors.arrow_color = Some(color);
+        }
+    }
     config.apply_env_overrides();
 }
 
@@ -500,6 +668,20 @@ fn main() -> Result<()> {
     } else {
         std::env::current_dir().context("failed to get current directory")?
     };
+    if cli.web {
+        let status = web_command(
+            &cwd,
+            &config.filter.exclude_patterns,
+            config.visual.show_edge_arrows,
+            config.visual.colors.arrow_color,
+        )
+        .status()
+        .context("could not start graf-web; install the optional graf-web companion")?;
+        if !status.success() {
+            anyhow::bail!("graf-web exited with status {status}");
+        }
+        return Ok(());
+    }
     let (files, scan_errors) =
         document::scan_notes(&cwd, &config.filter.exclude_patterns, &config.parsing);
 
@@ -518,6 +700,7 @@ fn main() -> Result<()> {
     let reload_ctx = ReloadCtx {
         config_path: &config_path,
         cli: &cli,
+        cwd: &cwd,
     };
 
     while running {
@@ -608,6 +791,153 @@ fn open_file_in_editor(
         .with_context(|| format!("failed to open editor '{editor}'"))?;
     anyhow::ensure!(status.success(), "editor exited with {status}");
     Ok(())
+}
+
+fn note_input_key(
+    input: &mut String,
+    cursor: &mut usize,
+    key: crossterm::event::KeyEvent,
+) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('u') if ctrl => { input.clear(); *cursor = 0; }
+        KeyCode::Char('a') if ctrl => { *cursor = 0; }
+        KeyCode::Home => { *cursor = 0; }
+        KeyCode::End => { *cursor = input.len(); }
+        KeyCode::Left if *cursor > 0 => {
+            *cursor = input[..*cursor].char_indices().next_back().map(|(i,_)|i).unwrap_or(0);
+        }
+        KeyCode::Right if *cursor < input.len() => {
+            *cursor += input[*cursor..].chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+        }
+        KeyCode::Backspace if *cursor > 0 => {
+            let prev = input[..*cursor].char_indices().next_back().map(|(i,_)|i).unwrap_or(0);
+            input.drain(prev..*cursor);
+            *cursor = prev;
+        }
+        KeyCode::Delete if *cursor < input.len() => {
+            let next = *cursor + input[*cursor..].chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+            input.drain(*cursor..next);
+        }
+        KeyCode::Char(ch) if !ctrl => {
+            input.insert(*cursor, ch);
+            *cursor += ch.len_utf8();
+        }
+        _ => {}
+    }
+}
+
+fn handle_create_note_keys(
+    app_state: &mut app::AppState,
+    key: crossterm::event::KeyEvent,
+) -> Option<EventAction> {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Esc => {
+            app_state.create_note_active = false;
+            app_state.create_note_input.clear();
+            None
+        }
+        KeyCode::Enter => {
+            let name = app_state.create_note_input.trim().to_string();
+            app_state.create_note_active = false;
+            app_state.create_note_input.clear();
+            if name.is_empty() { None } else { Some(EventAction::CreateNote(name)) }
+        }
+        _ => {
+            note_input_key(
+                &mut app_state.create_note_input,
+                &mut app_state.create_note_cursor,
+                key,
+            );
+            None
+        }
+    }
+}
+
+fn handle_rename_note_keys(
+    app_state: &mut app::AppState,
+    key: crossterm::event::KeyEvent,
+) -> Option<EventAction> {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Esc => {
+            app_state.rename_note_active = false;
+            app_state.rename_note_input.clear();
+            None
+        }
+        KeyCode::Enter => {
+            let from = app_state.rename_note_input.clone();
+            let to = app_state.rename_note_input.trim().to_string();
+            app_state.rename_note_active = false;
+            app_state.rename_note_input.clear();
+            if to.is_empty() || to == from { None } else { Some(EventAction::RenameNote { from, to }) }
+        }
+        _ => {
+            note_input_key(
+                &mut app_state.rename_note_input,
+                &mut app_state.rename_note_cursor,
+                key,
+            );
+            None
+        }
+    }
+}
+
+fn web_command(
+    dir: &std::path::Path,
+    patterns: &[String],
+    with_arrows: bool,
+    arrow_color: Option<ratatui::style::Color>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new("graf-web");
+    command.arg("--dir").arg(dir).arg("--open");
+    if with_arrows {
+        command.arg("--with-arrows");
+    }
+    if let Some(ratatui::style::Color::Rgb(r, g, b)) = arrow_color {
+        command
+            .arg("--arrow-color")
+            .arg(format!("#{r:02x}{g:02x}{b:02x}"));
+    }
+    for pattern in patterns {
+        command.arg("--exclude").arg(pattern);
+    }
+    command
+}
+
+fn spawn_web_view(
+    dir: &std::path::Path,
+    patterns: &[String],
+    with_arrows: bool,
+    arrow_color: Option<ratatui::style::Color>,
+) -> std::io::Result<std::process::Child> {
+    let mut child = web_command(dir, patterns, with_arrows, arrow_color).spawn()?;
+    for _ in 0..10 {
+        if web_health_check().unwrap_or(false) {
+            return Ok(child);
+        }
+        if child.try_wait()?.is_some() {
+            return Err(std::io::Error::other(
+                "graf-web exited before its server was ready",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Ok(child)
+}
+
+fn web_health_check() -> std::io::Result<bool> {
+    use std::io::{Read, Write};
+    let address = "127.0.0.1:8765".parse().expect("valid loopback address");
+    let mut stream =
+        std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(100))?;
+    stream.set_read_timeout(Some(std::time::Duration::from_millis(150)))?;
+    stream.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
+    let mut response = [0; 64];
+    let count = stream.read(&mut response)?;
+    Ok(response[..count].starts_with(b"HTTP/1.1 200 OK"))
 }
 
 fn handle_search_keys(
