@@ -54,14 +54,9 @@ impl GrafConfig {
         let fmt = fmt.replace("{files}", &files.to_string());
         let fmt = fmt.replace("{links}", &links.to_string());
         let fmt = fmt.replace("{selected}", selected.unwrap_or("none"));
-        let fmt = fmt.replace(
-            "{date}",
-            &chrono::Local::now().format("%Y-%m-%d").to_string(),
-        );
-        let fmt = fmt.replace(
-            "{time}",
-            &chrono::Local::now().format("%H:%M:%S").to_string(),
-        );
+        let now = jiff::Zoned::now();
+        let fmt = fmt.replace("{date}", &now.strftime("%Y-%m-%d").to_string());
+        let fmt = fmt.replace("{time}", &now.strftime("%H:%M:%S").to_string());
         let fmt = fmt.replace(
             "{size}",
             &format!("{:.0}%", viewport_size_pct.unwrap_or(0.0).clamp(0.0, 100.0)),

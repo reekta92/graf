@@ -767,13 +767,13 @@ fn layout_static_components(
                 let mut current_group = Vec::new();
                 let mut current_degree = c.nodes[1].degree;
                 current_group.push(1);
-                for idx in 2..n {
-                    if c.nodes[idx].degree == current_degree {
+                for (idx, node) in c.nodes.iter().enumerate().skip(2) {
+                    if node.degree == current_degree {
                         current_group.push(idx);
                     } else {
                         groups.push(current_group);
                         current_group = vec![idx];
-                        current_degree = c.nodes[idx].degree;
+                        current_degree = node.degree;
                     }
                 }
                 if !current_group.is_empty() {
