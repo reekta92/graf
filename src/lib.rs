@@ -31,6 +31,28 @@ pub use graph::{
     NodeSpec, Selection, apply_connection_change, build_graph, build_graph_resolved,
     create_simulation, menu_item_from_label, menu_specs, search_nodes,
 };
-pub use linker::{FileData, resolve_links, scan_markdown_files};
+pub use linker::{
+    FileData, resolve_links, scan_markdown_files,
+};
+
+/// Alias for [`resolve_links`]: resolves wikilink targets to relative paths.
+pub fn resolve_wikilinks(
+    files: &[linker::FileData],
+    exclude_tags: &[String],
+) -> std::collections::HashMap<String, Vec<String>> {
+    linker::resolve_links(files, exclude_tags)
+}
+
+/// Returns an empty map — markdown-link resolution requires the upstream
+/// linker feature; callers should use [`resolve_links`] instead.
+pub fn resolve_markdown_links(
+    files: &[linker::FileData],
+    _exclude_tags: &[String],
+) -> std::collections::HashMap<String, Vec<String>> {
+    files
+        .iter()
+        .map(|f| (f.relative_path.clone(), Vec::new()))
+        .collect()
+}
 pub use theme::ThemeColors;
-pub use wikilink::{add_wikilink, remove_wikilink};
+pub use wikilink::{add_wikilink, remove_wikilink, rename_wikilinks};
