@@ -1,6 +1,6 @@
 [package]
 name = "graf-rs"
-version = "1.1.2"
+version = "1.1.3"
 edition = "2024"
 rust-version = "1.88"
 description = "Terminal-based force-directed graph visualizer for markdown wikilinks"
@@ -42,7 +42,7 @@ directories = "6"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 parking_lot = "0.12"
-chrono = "0.4"
+jiff = "0.2.41"
 glob = "0.3"
 pulldown-cmark = { version = "0.13", default-features = false }
 serde-saphyr = { version = "1.1", default-features = false, features = ["deserialize"] }
