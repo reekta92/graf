@@ -2,6 +2,53 @@
 
 All notable changes to graf are documented in this file.
 
+## [1.1.3] - 2026-11-21
+
+### Added
+
+- Resolve and edit connections across Markdown formats
+- Add opt-in note parsing settings
+- Expose ID-aware connection events
+- Read Markdown links and optional inline tags
+
+### Changed
+
+- Share text truncation and remove unused dependency
+- Build resolved edges by note identity
+
+### Documentation
+
+- Explain cleanup behavior and compatibility settings
+- Explain note format compatibility and library adapters
+
+### Fixed
+
+- Iterate over graph nodes for Rust 1.100 Clippy
+- Use Jiff for graph timestamps
+- Align package version and supported platforms
+- Preserve wikilink titles containing colons
+- Normalize scanned note IDs across platforms
+- Interrupt idle workers and reheat edited connections
+- Honor configured forces timing and cooling limits
+- Apply degree filters and limits after link resolution
+- Rescan on refresh and apply validated reloads completely
+- Match overlay visibility and double-click targets
+- Fit graph bounds to actual canvas dimensions
+- Clip filled shapes and cache empty legends
+- Save note edits atomically before updating graph state
+- Honor literal roots and recursive exclusions
+- Preserve Unicode boundaries in config and search
+- Preserve wikilink titles containing colons
+- Harden parsing dependencies and connection edits
+
+### Miscellaneous
+
+- Bump toml from 1.1.8+spec-1.1.0 to 1.2.1+spec-1.1.0
+- Bump pulldown-cmark from 0.13.5 to 0.13.6
+
+### Merge
+
+- Preserve note-format compatibility in cleanup fixes
 ## [1.1.2] - 2026-10-25
 
 ### CI
@@ -13,6 +60,10 @@ All notable changes to graf are documented in this file.
 - Measure menu labels in cells and preserve selection contrast
 - Bound graph menus and distinguish hover from selection
 - Package current Graf release archives for both AUR architectures (#28)
+
+### Release
+
+- V1.1.2
 ## [1.1.1] - 2026-10-21
 
 ### CI
