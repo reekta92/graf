@@ -234,9 +234,9 @@ ideal_distance = 80.0
 damping = 0.95
 max_iterations = 800
 gravity = 0.01
-cooling = true
+cooling = false
 prevent_overlapping = true
-timestep = 0.016
+timestep = 0.12
 thread_sleep_ms = 16
 tick_rate = "auto"
 [interaction]
@@ -356,9 +356,9 @@ Controls the force-directed layout simulation.
 | `damping` | float | `0.95` | Velocity damping per step (lower = faster settling) |
 | `max_iterations` | int | `800` | Maximum steps per reheat when cooling is enabled |
 | `gravity` | float | `0.01` | Center pull to prevent drift |
-| `cooling` | bool | `true` | Settle and stop updating after cooling or the iteration limit; `false` keeps updating |
+| `cooling` | bool | `false` | Settle and stop updating after cooling or the iteration limit; `false` keeps updating |
 | `prevent_overlapping` | bool | `true` | Enable repulsive forces between nodes |
-| `timestep` | float | `0.016` | Simulation timestep (finite, positive; lower = smoother but slower) |
+| `timestep` | float | `0.12` | Simulation timestep (finite, positive; lower = smoother but slower) |
 | `thread_sleep_ms` | int | `16` | Minimum 1 ms between simulation ticks; auto mode uses at least 33 ms above 500 nodes |
 | `tick_rate` | string | `"auto"` | Tick rate mode: `"auto"` or `"fixed"` |
 
