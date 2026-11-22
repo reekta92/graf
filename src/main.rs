@@ -141,7 +141,7 @@ fn dispatch_action(
                 &cwd,
                 &patterns,
                 config.visual.show_edge_arrows,
-                config.visual.colors.arrow_color,
+                config.visual.arrow_color,
             ) {
                 Ok(_) => {
                     app_state.config_reload_msg = Some(
@@ -229,14 +229,14 @@ fn dispatch_action(
                                     continue;
                                 }
                                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                                if ext == "md" || ext == "mdx" {
-                                    if let Ok(content) = std::fs::read_to_string(&path) {
-                                        let updated = crate::wikilink::rename_wikilinks(
-                                            &content, &old_stem, &new_stem,
-                                        );
-                                        if updated != content {
-                                            let _ = std::fs::write(&path, updated);
-                                        }
+                                if matches!(ext, "md" | "mdx")
+                                    && let Ok(content) = std::fs::read_to_string(&path)
+                                {
+                                    let updated = crate::wikilink::rename_wikilinks(
+                                        &content, &old_stem, &new_stem,
+                                    );
+                                    if updated != content {
+                                        let _ = std::fs::write(&path, updated);
                                     }
                                 }
                             }
@@ -630,10 +630,12 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
     if cli.with_arrows {
         config.visual.show_edge_arrows = true;
     }
-    if let Some(ref color) = cli.arrow_color {
-        if let Some(color) = settings::parse_hex_color(color) {
-            config.visual.colors.arrow_color = Some(color);
-        }
+    if let Some(color) = cli
+        .arrow_color
+        .as_deref()
+        .and_then(settings::parse_hex_color)
+    {
+        config.visual.arrow_color = Some(color);
     }
     config.apply_env_overrides();
 }
@@ -674,7 +676,7 @@ fn main() -> Result<()> {
             &cwd,
             &config.filter.exclude_patterns,
             config.visual.show_edge_arrows,
-            config.visual.colors.arrow_color,
+            config.visual.arrow_color,
         )
         .status()
         .context("could not start graf-web; install the optional graf-web companion")?;

@@ -95,8 +95,7 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
             area,
             "New note  (folder/name or just name)",
             "Enter: create · Esc: cancel",
-            &state.create_note_input,
-            state.create_note_cursor,
+            (&state.create_note_input, state.create_note_cursor),
             config,
             &colors,
         );
@@ -108,8 +107,7 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
             area,
             "Move / Rename",
             "Enter: apply · Esc: cancel",
-            &state.rename_note_input,
-            state.rename_note_cursor,
+            (&state.rename_note_input, state.rename_note_cursor),
             config,
             &colors,
         );
@@ -351,8 +349,7 @@ fn draw_note_input(
     area: Rect,
     title: &str,
     hint: &str,
-    input: &str,
-    cursor: usize,
+    (input, cursor): (&str, usize),
     config: &GrafConfig,
     colors: &crate::theme::ThemeColors,
 ) {

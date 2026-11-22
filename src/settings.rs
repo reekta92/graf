@@ -383,6 +383,13 @@ pub struct VisualConfig {
     pub colors: ColorOverrides,
     #[serde(default)]
     pub show_edge_arrows: bool,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub arrow_color: Option<Color>,
     // Graf-only fields
     /// Legacy compatibility field; the grid now adapts to zoom.
     pub grid_divisions: usize,
@@ -417,8 +424,9 @@ impl Default for VisualConfig {
             looking_glass_width: 24,
             looking_glass_height: 12,
             colors: ColorOverrides::default(),
-            grid_divisions: 10,
             show_edge_arrows: false,
+            arrow_color: None,
+            grid_divisions: 10,
         }
     }
 }
@@ -658,7 +666,6 @@ pub struct ColorOverrides {
     pub legend_text_color: Option<Color>,
     pub status_bar_color: Option<Color>,
     pub background_color: Option<Color>,
-    pub arrow_color: Option<Color>,
 }
 
 impl serde::Serialize for ColorOverrides {
@@ -668,7 +675,7 @@ impl serde::Serialize for ColorOverrides {
     {
         use serde::ser::SerializeStruct;
 
-        let mut s = serializer.serialize_struct("ColorOverrides", 11)?;
+        let mut s = serializer.serialize_struct("ColorOverrides", 10)?;
 
         fn fmt_color(c: &Color) -> String {
             if let Color::Rgb(r, g, b) = c {
@@ -708,9 +715,6 @@ impl serde::Serialize for ColorOverrides {
         if let Some(ref v) = self.background_color {
             s.serialize_field("background_color", &fmt_color(v))?;
         }
-        if let Some(ref v) = self.arrow_color {
-            s.serialize_field("arrow_color", &fmt_color(v))?;
-        }
 
         s.end()
     }
@@ -743,8 +747,6 @@ impl<'de> serde::Deserialize<'de> for ColorOverrides {
             status_bar_color: Option<Color>,
             #[serde(default, deserialize_with = "deserialize_optional_color")]
             background_color: Option<Color>,
-            #[serde(default, deserialize_with = "deserialize_optional_color")]
-            arrow_color: Option<Color>,
         }
 
         let raw = ColorOverridesRaw::deserialize(deserializer)?;
@@ -759,7 +761,6 @@ impl<'de> serde::Deserialize<'de> for ColorOverrides {
             legend_text_color: raw.legend_text_color,
             status_bar_color: raw.status_bar_color,
             background_color: raw.background_color,
-            arrow_color: raw.arrow_color,
         })
     }
 }
@@ -775,6 +776,16 @@ pub fn parse_hex_color(s: &str) -> Option<Color> {
         Some(Color::Rgb(r, g, b))
     } else {
         None
+    }
+}
+
+fn serialize_optional_color<S>(color: &Option<Color>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match color {
+        Some(color) => serializer.collect_str(color),
+        None => serializer.serialize_none(),
     }
 }
 
@@ -794,6 +805,16 @@ where
 #[cfg(test)]
 mod color_tests {
     use super::*;
+
+    #[test]
+    fn visual_arrow_color_round_trips_as_hex() {
+        let visual: VisualConfig =
+            toml::from_str("show_edge_arrows = true\narrow_color = '#12abEF'").unwrap();
+        assert!(visual.show_edge_arrows);
+        assert_eq!(visual.arrow_color, Some(Color::Rgb(18, 171, 239)));
+        let stored = toml::to_string(&visual).unwrap();
+        assert_eq!(toml::from_str::<VisualConfig>(&stored).unwrap(), visual);
+    }
 
     #[test]
     fn hex_colors_reject_non_ascii_without_panicking() {
