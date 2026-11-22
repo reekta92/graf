@@ -31,9 +31,7 @@ pub use graph::{
     NodeSpec, Selection, apply_connection_change, build_graph, build_graph_resolved,
     create_simulation, menu_item_from_label, menu_specs, search_nodes,
 };
-pub use linker::{
-    FileData, resolve_links, scan_markdown_files,
-};
+pub use linker::{FileData, resolve_links, scan_markdown_files};
 
 /// Alias for [`resolve_links`]: resolves wikilink targets to relative paths.
 pub fn resolve_wikilinks(

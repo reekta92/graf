@@ -91,23 +91,27 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
 
     if state.create_note_active {
         draw_note_input(
-            frame, area,
+            frame,
+            area,
             "New note  (folder/name or just name)",
             "Enter: create · Esc: cancel",
             &state.create_note_input,
             state.create_note_cursor,
-            config, &colors,
+            config,
+            &colors,
         );
     }
 
     if state.rename_note_active {
         draw_note_input(
-            frame, area,
+            frame,
+            area,
             "Move / Rename",
             "Enter: apply · Esc: cancel",
             &state.rename_note_input,
             state.rename_note_cursor,
-            config, &colors,
+            config,
+            &colors,
         );
     }
 
@@ -368,8 +372,14 @@ fn draw_note_input(
         .add_modifier(ratatui::style::Modifier::REVERSED);
     let muted = ratatui::style::Style::default().fg(colors.status_bar_color);
 
-    let cursor_char = after.chars().next().map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
-    let after_cursor = after.chars().next()
+    let cursor_char = after
+        .chars()
+        .next()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| " ".to_string());
+    let after_cursor = after
+        .chars()
+        .next()
         .map(|c| after[c.len_utf8()..].to_string())
         .unwrap_or_default();
 
@@ -392,7 +402,10 @@ fn draw_note_input(
         .border_style(ratatui::style::Style::default().fg(colors.border_color));
 
     frame.render_widget(Clear, popup_area);
-    frame.render_widget(ratatui::widgets::Paragraph::new(lines).block(block), popup_area);
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(lines).block(block),
+        popup_area,
+    );
 }
 
 fn draw_reload_notification(

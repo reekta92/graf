@@ -232,9 +232,7 @@ fn dispatch_action(
                                 if ext == "md" || ext == "mdx" {
                                     if let Ok(content) = std::fs::read_to_string(&path) {
                                         let updated = crate::wikilink::rename_wikilinks(
-                                            &content,
-                                            &old_stem,
-                                            &new_stem,
+                                            &content, &old_stem, &new_stem,
                                         );
                                         if updated != content {
                                             let _ = std::fs::write(&path, updated);
@@ -457,7 +455,10 @@ fn apply_graph_action(
             let path = app_state.graph_state.as_ref().and_then(|gs| {
                 let g = gs.read();
                 g.selection.primary.and_then(|idx| {
-                    g.simulation.get_graph().node_weight(idx).map(|n| n.data.id.clone())
+                    g.simulation
+                        .get_graph()
+                        .node_weight(idx)
+                        .map(|n| n.data.id.clone())
                 })
             });
             if let Some(path) = path {
@@ -793,31 +794,53 @@ fn open_file_in_editor(
     Ok(())
 }
 
-fn note_input_key(
-    input: &mut String,
-    cursor: &mut usize,
-    key: crossterm::event::KeyEvent,
-) {
+fn note_input_key(input: &mut String, cursor: &mut usize, key: crossterm::event::KeyEvent) {
     use crossterm::event::{KeyCode, KeyModifiers};
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char('u') if ctrl => { input.clear(); *cursor = 0; }
-        KeyCode::Char('a') if ctrl => { *cursor = 0; }
-        KeyCode::Home => { *cursor = 0; }
-        KeyCode::End => { *cursor = input.len(); }
+        KeyCode::Char('u') if ctrl => {
+            input.clear();
+            *cursor = 0;
+        }
+        KeyCode::Char('a') if ctrl => {
+            *cursor = 0;
+        }
+        KeyCode::Home => {
+            *cursor = 0;
+        }
+        KeyCode::End => {
+            *cursor = input.len();
+        }
         KeyCode::Left if *cursor > 0 => {
-            *cursor = input[..*cursor].char_indices().next_back().map(|(i,_)|i).unwrap_or(0);
+            *cursor = input[..*cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
         }
         KeyCode::Right if *cursor < input.len() => {
-            *cursor += input[*cursor..].chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+            *cursor += input[*cursor..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
         }
         KeyCode::Backspace if *cursor > 0 => {
-            let prev = input[..*cursor].char_indices().next_back().map(|(i,_)|i).unwrap_or(0);
+            let prev = input[..*cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             input.drain(prev..*cursor);
             *cursor = prev;
         }
         KeyCode::Delete if *cursor < input.len() => {
-            let next = *cursor + input[*cursor..].chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+            let next = *cursor
+                + input[*cursor..]
+                    .chars()
+                    .next()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
             input.drain(*cursor..next);
         }
         KeyCode::Char(ch) if !ctrl => {
@@ -843,7 +866,11 @@ fn handle_create_note_keys(
             let name = app_state.create_note_input.trim().to_string();
             app_state.create_note_active = false;
             app_state.create_note_input.clear();
-            if name.is_empty() { None } else { Some(EventAction::CreateNote(name)) }
+            if name.is_empty() {
+                None
+            } else {
+                Some(EventAction::CreateNote(name))
+            }
         }
         _ => {
             note_input_key(
@@ -872,7 +899,11 @@ fn handle_rename_note_keys(
             let to = app_state.rename_note_input.trim().to_string();
             app_state.rename_note_active = false;
             app_state.rename_note_input.clear();
-            if to.is_empty() || to == from { None } else { Some(EventAction::RenameNote { from, to }) }
+            if to.is_empty() || to == from {
+                None
+            } else {
+                Some(EventAction::RenameNote { from, to })
+            }
         }
         _ => {
             note_input_key(

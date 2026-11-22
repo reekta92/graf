@@ -181,7 +181,10 @@ mod tests {
         let out = rename_wikilinks(content, "old-note", "new-note");
         assert!(out.contains("[[new-note]]"), "plain link renamed");
         assert!(out.contains("[[new-note|alias]]"), "aliased link renamed");
-        assert!(out.contains("[[old-note-extra]]"), "prefix match not renamed");
+        assert!(
+            out.contains("[[old-note-extra]]"),
+            "prefix match not renamed"
+        );
     }
 
     #[test]
