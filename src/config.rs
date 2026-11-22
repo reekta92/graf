@@ -375,6 +375,7 @@ mod tests {
         let config: GrafConfig = toml::from_str(generate_default_toml()).unwrap();
         assert_eq!(config.visual.theme, crate::settings::Theme::Onedark);
         assert_eq!(config.parsing.link_format, LinkFormat::Wiki);
+        assert_eq!(config.physics, crate::settings::PhysicsConfig::default());
     }
 
     #[test]

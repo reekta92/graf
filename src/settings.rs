@@ -431,7 +431,6 @@ pub struct PhysicsConfig {
     pub damping: f32,
     pub max_iterations: usize,
     pub gravity: f64,
-    #[serde(default = "default_true")]
     pub cooling: bool,
     #[serde(default = "default_true")]
     pub prevent_overlapping: bool,
@@ -443,8 +442,8 @@ impl Default for PhysicsConfig {
         Self {
             ideal_distance: 80.0,
             tick_rate: PhysicsTickRate::default(),
-            timestep: 0.016,
-            cooling: true,
+            timestep: 0.12,
+            cooling: false,
             prevent_overlapping: true,
             damping: 0.95,
             max_iterations: 800,

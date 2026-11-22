@@ -54,11 +54,11 @@ looking_glass_height = 10
 [physics]
 # ideal_distance = 80.0
 # tick_rate = "auto"
-# timestep = 0.016
+# timestep = 0.12
 # damping = 0.95
 # max_iterations = 800
 # gravity = 0.01
-# cooling = true
+# cooling = false
 # prevent_overlapping = true
 # thread_sleep_ms = 16
 

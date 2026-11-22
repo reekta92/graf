@@ -689,10 +689,46 @@ mod tests {
         }
     }
     #[test]
+    fn default_physics_relaxes_links_and_keeps_responding_to_edits() {
+        let mut state = setup_mock_graph(&[("a", &["b"]), ("b", &[])]);
+        state.alpha = 0.4;
+        let graph = state.simulation.get_graph_mut();
+        let (source, target) = graph
+            .edge_endpoints(graph.edge_indices().next().unwrap())
+            .unwrap();
+        graph[source].location = fdg_sim::glam::Vec3::new(-90.0, 0.0, 0.0);
+        graph[target].location = fdg_sim::glam::Vec3::new(90.0, 0.0, 0.0);
+
+        let config = Settings::default().physics;
+        let mut iterations = 0;
+        let mut previous_alpha = 0.0;
+        let separation = |state: &GraphState| {
+            let graph = state.simulation.get_graph();
+            graph[source].location.distance(graph[target].location)
+        };
+        for _ in 0..100 {
+            physics_tick(&mut state, &config, &mut iterations, &mut previous_alpha);
+        }
+        let distance = separation(&state);
+        assert!(
+            distance < 120.0,
+            "linked nodes stayed too far apart: {distance}"
+        );
+        assert!(!state.is_settled);
+
+        crate::graph::apply_connection_change(&mut state.simulation, source, target, false);
+        for _ in 0..20 {
+            physics_tick(&mut state, &config, &mut iterations, &mut previous_alpha);
+        }
+        assert!(separation(&state) > distance);
+    }
+
+    #[test]
     fn configured_iterations_stop_and_reheating_restarts_simulation() {
         let mut state = setup_mock_graph(&[("a", &["b"]), ("b", &[])]);
         state.physics_worker_active = true;
         let mut config = Settings::default().physics;
+        config.cooling = true;
         config.max_iterations = 2;
         config.timestep = 0.02;
         let mut iterations = 0;
