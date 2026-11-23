@@ -2,6 +2,11 @@
 
 All notable changes to graf are documented in this file.
 
+## [1.1.4] - 2026-11-23
+
+### Fixed
+
+- Restore continuous simulation defaults
 ## [1.1.3] - 2026-11-21
 
 ### Added
@@ -49,6 +54,10 @@ All notable changes to graf are documented in this file.
 ### Merge
 
 - Preserve note-format compatibility in cleanup fixes
+
+### Release
+
+- V1.1.3
 ## [1.1.2] - 2026-10-25
 
 ### CI
