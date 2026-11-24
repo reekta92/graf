@@ -581,7 +581,8 @@ displayed degree. Duplicate titles do not change the identity of a link's source
 
 `start_physics` uses `physics.timestep`, `thread_sleep_ms`, `gravity`, and
 `prevent_overlapping` (repulsion). With `cooling = true`, updates settle or stop at
-`max_iterations` and resume after reheating. With `cooling = false`, updates continue.
+`max_iterations` and resume after reheating. By default, updates continue with
+`cooling = false` and a timestep of `0.12`.
 Fixed tick mode honors `thread_sleep_ms`; auto mode uses at least 33 ms above 500 nodes.
 The default initial placement span is independent of the iteration limit.
 
