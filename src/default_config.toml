@@ -39,6 +39,10 @@ show_looking_glass = true
 looking_glass_width = 16
 looking_glass_height = 10
 
+# Direction arrows and optional color for the browser graph.
+show_edge_arrows = false
+# arrow_color = "#445566"
+
 [visual.colors]
 # node_color = "#ff6600"
 # edge_color = "#445566"

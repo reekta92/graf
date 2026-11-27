@@ -1,5 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::widgets::Clear;
 
 use crate::app::AppState;
 use crate::config::GrafConfig;
@@ -39,13 +40,14 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
                 .primary
                 .and_then(|idx| graph.node_weight(idx))
                 .map(|n| n.data.title.clone());
-            let status = config.expand_status(
+            let mut status = config.expand_status(
                 graph.node_count(),
                 graph.edge_count(),
                 selected_title.as_deref(),
                 Some(guard.viewport.zoom * 40.0),
                 Some(guard.viewport.zoom),
             );
+            status.push_str(" | c: new  n: neighborhood");
             let paragraph = ratatui::widgets::Paragraph::new(status).style(
                 ratatui::style::Style::default()
                     .fg(colors.status_bar_color)
@@ -85,6 +87,18 @@ pub fn draw_ui(frame: &mut Frame, state: &AppState, config: &GrafConfig) {
 
     if state.search_active {
         draw_search(frame, area, state, config, &colors);
+    }
+
+    if state.create_note_active {
+        draw_note_input(
+            frame,
+            area,
+            "New note  (folder/name or just name)",
+            "Enter: create · Esc: cancel",
+            (&state.create_note_input, state.create_note_cursor),
+            config,
+            &colors,
+        );
     }
 
     if let Some(ref msg) = state.config_reload_msg {
@@ -179,6 +193,8 @@ fn draw_help(frame: &mut Frame, area: Rect, config: &GrafConfig) {
         "  Enter       Open selected file",
         "  a           Auto-fit view",
         "  f           Search nodes",
+        "  n           Focus selected note + neighbors (Esc to return)",
+        "  c           Create new note",
         "  m           Toggle minimap",
         "  Ctrl+l      Toggle legend",
         "  Ctrl+g      Toggle grid",
@@ -312,6 +328,67 @@ fn draw_search(
 
     let paragraph = ratatui::widgets::Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, popup_area);
+}
+
+fn draw_note_input(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    hint: &str,
+    (input, cursor): (&str, usize),
+    config: &GrafConfig,
+    colors: &crate::theme::ThemeColors,
+) {
+    let width = (title.len().max(hint.len()).max(input.len() + 10) as u16 + 4).min(area.width);
+    let popup_area = ratatui::layout::Rect::new(
+        (area.width.saturating_sub(width)) / 2,
+        area.height / 2 - 2,
+        width,
+        5,
+    );
+
+    let before = &input[..cursor];
+    let after = &input[cursor..];
+    let label_style = ratatui::style::Style::default().fg(colors.label_color);
+    let cursor_style = ratatui::style::Style::default()
+        .fg(colors.border_color)
+        .add_modifier(ratatui::style::Modifier::REVERSED);
+    let muted = ratatui::style::Style::default().fg(colors.status_bar_color);
+
+    let cursor_char = after
+        .chars()
+        .next()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| " ".to_string());
+    let after_cursor = after
+        .chars()
+        .next()
+        .map(|c| after[c.len_utf8()..].to_string())
+        .unwrap_or_default();
+
+    let input_line = ratatui::text::Line::from(vec![
+        ratatui::text::Span::styled(before.to_string(), label_style),
+        ratatui::text::Span::styled(cursor_char, cursor_style),
+        ratatui::text::Span::styled(after_cursor, label_style),
+    ]);
+
+    let lines = vec![
+        input_line,
+        ratatui::text::Line::raw(""),
+        ratatui::text::Line::styled(hint, muted),
+    ];
+
+    let block = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .title(title)
+        .border_type(config.display.border_style.to_border_type())
+        .border_style(ratatui::style::Style::default().fg(colors.border_color));
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(lines).block(block),
+        popup_area,
+    );
 }
 
 fn draw_reload_notification(

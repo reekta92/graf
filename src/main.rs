@@ -98,11 +98,13 @@ enum EventAction {
     Quit,
     OpenFile(String),
     ReloadConfig,
+    CreateNote(String),
 }
 
 struct ReloadCtx<'a> {
     config_path: &'a Option<std::path::PathBuf>,
     cli: &'a cli::Cli,
+    cwd: &'a std::path::PathBuf,
 }
 
 fn dispatch_action(
@@ -136,6 +138,39 @@ fn dispatch_action(
                 reload_ctx.config_path.as_ref(),
                 reload_ctx.cli,
             );
+        }
+        EventAction::CreateNote(rel_path) => {
+            let rel_path = if rel_path.ends_with(".md") || rel_path.ends_with(".mdx") {
+                rel_path
+            } else {
+                format!("{rel_path}.md")
+            };
+            if rel_path.split('/').any(|c| c == "..") {
+                app_state.config_reload_msg = Some("Invalid path".to_string());
+                app_state.config_reload_ttl = 90;
+                return Ok(());
+            }
+            let full_path = reload_ctx.cwd.join(&rel_path);
+            if full_path.exists() {
+                app_state.config_reload_msg = Some(format!("{rel_path}: already exists"));
+                app_state.config_reload_ttl = 120;
+                return Ok(());
+            }
+            let stem = std::path::Path::new(&rel_path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "New Note".to_string());
+            match std::fs::write(&full_path, format!("# {stem}\n")) {
+                Ok(()) => {
+                    app_state.rescan(config);
+                    app_state.config_reload_msg = Some(format!("Created {rel_path}"));
+                    app_state.config_reload_ttl = 90;
+                }
+                Err(e) => {
+                    app_state.config_reload_msg = Some(format!("Could not create: {e}"));
+                    app_state.config_reload_ttl = 120;
+                }
+            }
         }
     }
     Ok(())
@@ -197,6 +232,9 @@ fn handle_event(
                     return Ok(Some(EventAction::Quit));
                 }
                 return Ok(None);
+            }
+            if app_state.create_note_active {
+                return Ok(handle_create_note_keys(app_state, key));
             }
             if app_state.show_help {
                 if key.code == crossterm::event::KeyCode::Esc
@@ -311,6 +349,16 @@ fn apply_graph_action(
             app_state.exit_focus(config);
             None
         }
+        GraphAction::FocusNeighborhood => {
+            focus_neighborhood(app_state, config);
+            None
+        }
+        GraphAction::CreateNote => {
+            app_state.create_note_active = true;
+            app_state.create_note_input.clear();
+            app_state.create_note_cursor = 0;
+            None
+        }
         // Preview/looking-glass are clin-host features.
         GraphAction::TogglePreview | GraphAction::ToggleLookingGlass => None,
         // Stateful actions are consumed inside the engine.
@@ -347,28 +395,7 @@ fn execute_menu_action(
             }
         }
         MenuItem::LocalGraph => {
-            let ids: std::collections::HashSet<String> = {
-                let Some(gs) = &app_state.graph_state else {
-                    return;
-                };
-                let g = gs.read();
-                let mut ids = std::collections::HashSet::new();
-                if let Some(anchor) = g.selection.primary {
-                    let graph_ref = g.simulation.get_graph();
-                    if let Some(n) = graph_ref.node_weight(anchor) {
-                        ids.insert(n.data.id.clone());
-                    }
-                    for nbr in graph_ref.neighbors(anchor) {
-                        if let Some(n) = graph_ref.node_weight(nbr) {
-                            ids.insert(n.data.id.clone());
-                        }
-                    }
-                }
-                ids
-            };
-            if !ids.is_empty() {
-                app_state.enter_focus(config, ids, ModeBanner::LocalGraph);
-            }
+            focus_neighborhood(app_state, config);
         }
         MenuItem::ShowGroup => {
             let ids: std::collections::HashSet<String> = {
@@ -466,6 +493,16 @@ fn apply_cli_overrides(config: &mut config::GrafConfig, cli: &cli::Cli) {
     if let Some(ref editor) = cli.editor {
         config.editor.command = Some(editor.clone());
     }
+    if cli.with_arrows {
+        config.visual.show_edge_arrows = true;
+    }
+    if let Some(color) = cli
+        .arrow_color
+        .as_deref()
+        .and_then(settings::parse_hex_color)
+    {
+        config.visual.arrow_color = Some(color);
+    }
     config.apply_env_overrides();
 }
 
@@ -518,6 +555,7 @@ fn main() -> Result<()> {
     let reload_ctx = ReloadCtx {
         config_path: &config_path,
         cli: &cli,
+        cwd: &cwd,
     };
 
     while running {
@@ -608,6 +646,120 @@ fn open_file_in_editor(
         .with_context(|| format!("failed to open editor '{editor}'"))?;
     anyhow::ensure!(status.success(), "editor exited with {status}");
     Ok(())
+}
+
+fn focus_neighborhood(app_state: &mut app::AppState, config: &config::GrafConfig) {
+    let ids: std::collections::HashSet<String> = {
+        let Some(gs) = &app_state.graph_state else {
+            return;
+        };
+        let g = gs.read();
+        let mut ids = std::collections::HashSet::new();
+        if let Some(anchor) = g.selection.primary {
+            let graph_ref = g.simulation.get_graph();
+            if let Some(node) = graph_ref.node_weight(anchor) {
+                ids.insert(node.data.id.clone());
+            }
+            for neighbor in graph_ref.neighbors(anchor) {
+                if let Some(node) = graph_ref.node_weight(neighbor) {
+                    ids.insert(node.data.id.clone());
+                }
+            }
+        }
+        ids
+    };
+    if !ids.is_empty() {
+        app_state.enter_focus(config, ids, crate::graph::ModeBanner::LocalGraph);
+    }
+}
+
+fn note_input_key(input: &mut String, cursor: &mut usize, key: crossterm::event::KeyEvent) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('u') if ctrl => {
+            input.clear();
+            *cursor = 0;
+        }
+        KeyCode::Char('a') if ctrl => {
+            *cursor = 0;
+        }
+        KeyCode::Home => {
+            *cursor = 0;
+        }
+        KeyCode::End => {
+            *cursor = input.len();
+        }
+        KeyCode::Left if *cursor > 0 => {
+            *cursor = input[..*cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
+        KeyCode::Right if *cursor < input.len() => {
+            *cursor += input[*cursor..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
+        }
+        KeyCode::Backspace if *cursor > 0 => {
+            let prev = input[..*cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            input.drain(prev..*cursor);
+            *cursor = prev;
+        }
+        KeyCode::Delete if *cursor < input.len() => {
+            let next = *cursor
+                + input[*cursor..]
+                    .chars()
+                    .next()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+            input.drain(*cursor..next);
+        }
+        KeyCode::Char(ch) if !ctrl => {
+            input.insert(*cursor, ch);
+            *cursor += ch.len_utf8();
+        }
+        _ => {}
+    }
+}
+
+fn handle_create_note_keys(
+    app_state: &mut app::AppState,
+    key: crossterm::event::KeyEvent,
+) -> Option<EventAction> {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Esc => {
+            app_state.create_note_active = false;
+            app_state.create_note_input.clear();
+            None
+        }
+        KeyCode::Enter => {
+            let name = app_state.create_note_input.trim().to_string();
+            app_state.create_note_active = false;
+            app_state.create_note_input.clear();
+            if name.is_empty() {
+                None
+            } else {
+                Some(EventAction::CreateNote(name))
+            }
+        }
+        _ => {
+            note_input_key(
+                &mut app_state.create_note_input,
+                &mut app_state.create_note_cursor,
+                key,
+            );
+            None
+        }
+    }
 }
 
 fn handle_search_keys(
