@@ -32,6 +32,7 @@ pub enum GraphAction {
         create: bool,
     },
     ClearFocus,
+    RenameNote,
 
     // Stateful actions (consumed by `apply_action`)
     PanUp,
@@ -76,7 +77,8 @@ pub fn apply_action(
         | ToggleLookingGlass
         | MenuAction(_)
         | ConnectionEvent { .. }
-        | ClearFocus) => Some(action),
+        | ClearFocus
+        | RenameNote) => Some(action),
         PanUp => {
             select_in_direction(&mut guard, 0.0, 1.0);
             None
@@ -206,6 +208,8 @@ impl Default for GraphKeymap {
                 binding(KeyCode::Char('l'), true, ToggleLegend),
                 binding(KeyCode::Char('g'), true, ToggleGrid),
                 binding(KeyCode::Char('s'), true, ToggleStatus),
+                binding(KeyCode::Char('e'), false, RenameNote),
+                binding(KeyCode::Char('E'), false, RenameNote),
             ],
         }
     }
