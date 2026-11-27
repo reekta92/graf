@@ -75,4 +75,8 @@ pub struct Cli {
     /// Editor command to open files
     #[arg(long)]
     pub editor: Option<String>,
+
+    /// Open the optional browser view directly (requires `graf-web`)
+    #[arg(long)]
+    pub web: bool,
 }

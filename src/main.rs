@@ -98,11 +98,13 @@ enum EventAction {
     Quit,
     OpenFile(String),
     ReloadConfig,
+    OpenWebView,
 }
 
 struct ReloadCtx<'a> {
     config_path: &'a Option<std::path::PathBuf>,
     cli: &'a cli::Cli,
+    cwd: &'a std::path::PathBuf,
 }
 
 fn dispatch_action(
@@ -136,6 +138,32 @@ fn dispatch_action(
                 reload_ctx.config_path.as_ref(),
                 reload_ctx.cli,
             );
+        }
+        EventAction::OpenWebView => {
+            guard.suspend()?;
+            let cwd = reload_ctx.cwd.clone();
+            let patterns = config.filter.exclude_patterns.clone();
+            match spawn_web_view(
+                &cwd,
+                &patterns,
+                config.visual.show_edge_arrows,
+                config.visual.arrow_color,
+            ) {
+                Ok(_) => {
+                    app_state.config_reload_msg = Some(
+                        "Web view: http://127.0.0.1:8765/ (close the graf-web process to stop)"
+                            .into(),
+                    );
+                    app_state.config_reload_ttl = 120;
+                }
+                Err(error) => {
+                    app_state.config_reload_msg = Some(format!(
+                        "Could not open web view: {error}. Install graf-web or run graf --web."
+                    ));
+                    app_state.config_reload_ttl = 240;
+                }
+            }
+            guard.resume()?;
         }
     }
     Ok(())
@@ -311,6 +339,7 @@ fn apply_graph_action(
             app_state.exit_focus(config);
             None
         }
+        GraphAction::OpenWebView => Some(EventAction::OpenWebView),
         // Preview/looking-glass are clin-host features.
         GraphAction::TogglePreview | GraphAction::ToggleLookingGlass => None,
         // Stateful actions are consumed inside the engine.
@@ -500,6 +529,20 @@ fn main() -> Result<()> {
     } else {
         std::env::current_dir().context("failed to get current directory")?
     };
+    if cli.web {
+        let status = web_command(
+            &cwd,
+            &config.filter.exclude_patterns,
+            config.visual.show_edge_arrows,
+            config.visual.arrow_color,
+        )
+        .status()
+        .context("could not start graf-web; install the optional graf-web companion")?;
+        if !status.success() {
+            anyhow::bail!("graf-web exited with status {status}");
+        }
+        return Ok(());
+    }
     let (files, scan_errors) =
         document::scan_notes(&cwd, &config.filter.exclude_patterns, &config.parsing);
 
@@ -518,6 +561,7 @@ fn main() -> Result<()> {
     let reload_ctx = ReloadCtx {
         config_path: &config_path,
         cli: &cli,
+        cwd: &cwd,
     };
 
     while running {
@@ -608,6 +652,61 @@ fn open_file_in_editor(
         .with_context(|| format!("failed to open editor '{editor}'"))?;
     anyhow::ensure!(status.success(), "editor exited with {status}");
     Ok(())
+}
+
+fn web_command(
+    dir: &std::path::Path,
+    patterns: &[String],
+    with_arrows: bool,
+    arrow_color: Option<ratatui::style::Color>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new("graf-web");
+    command.arg("--dir").arg(dir).arg("--open");
+    if with_arrows {
+        command.arg("--with-arrows");
+    }
+    if let Some(ratatui::style::Color::Rgb(r, g, b)) = arrow_color {
+        command
+            .arg("--arrow-color")
+            .arg(format!("#{r:02x}{g:02x}{b:02x}"));
+    }
+    for pattern in patterns {
+        command.arg("--exclude").arg(pattern);
+    }
+    command
+}
+
+fn spawn_web_view(
+    dir: &std::path::Path,
+    patterns: &[String],
+    with_arrows: bool,
+    arrow_color: Option<ratatui::style::Color>,
+) -> std::io::Result<std::process::Child> {
+    let mut child = web_command(dir, patterns, with_arrows, arrow_color).spawn()?;
+    for _ in 0..10 {
+        if web_health_check().unwrap_or(false) {
+            return Ok(child);
+        }
+        if child.try_wait()?.is_some() {
+            return Err(std::io::Error::other(
+                "graf-web exited before its server was ready",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Ok(child)
+}
+
+fn web_health_check() -> std::io::Result<bool> {
+    use std::io::{Read, Write};
+    let address = "127.0.0.1:8765".parse().expect("valid loopback address");
+    let mut stream =
+        std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(100))?;
+    stream.set_read_timeout(Some(std::time::Duration::from_millis(150)))?;
+    stream.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
+    let mut response = [0; 64];
+    let count = stream.read(&mut response)?;
+    Ok(response[..count].starts_with(b"HTTP/1.1 200 OK"))
 }
 
 fn handle_search_keys(
