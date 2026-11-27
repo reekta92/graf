@@ -381,6 +381,15 @@ pub struct VisualConfig {
     pub looking_glass_height: u16,
     #[serde(default)]
     pub colors: ColorOverrides,
+    #[serde(default)]
+    pub show_edge_arrows: bool,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_color",
+        serialize_with = "serialize_optional_color",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub arrow_color: Option<Color>,
     // Graf-only fields
     /// Legacy compatibility field; the grid now adapts to zoom.
     pub grid_divisions: usize,
@@ -415,6 +424,8 @@ impl Default for VisualConfig {
             looking_glass_width: 24,
             looking_glass_height: 12,
             colors: ColorOverrides::default(),
+            show_edge_arrows: false,
+            arrow_color: None,
             grid_divisions: 10,
         }
     }
@@ -767,6 +778,16 @@ pub fn parse_hex_color(s: &str) -> Option<Color> {
     }
 }
 
+fn serialize_optional_color<S>(color: &Option<Color>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match color {
+        Some(color) => serializer.collect_str(color),
+        None => serializer.serialize_none(),
+    }
+}
+
 pub fn deserialize_optional_color<'de, D>(deserializer: D) -> Result<Option<Color>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -783,6 +804,16 @@ where
 #[cfg(test)]
 mod color_tests {
     use super::*;
+
+    #[test]
+    fn visual_arrow_color_round_trips_as_hex() {
+        let visual: VisualConfig =
+            toml::from_str("show_edge_arrows = true\narrow_color = '#12abEF'").unwrap();
+        assert!(visual.show_edge_arrows);
+        assert_eq!(visual.arrow_color, Some(Color::Rgb(18, 171, 239)));
+        let stored = toml::to_string(&visual).unwrap();
+        assert_eq!(toml::from_str::<VisualConfig>(&stored).unwrap(), visual);
+    }
 
     #[test]
     fn hex_colors_reject_non_ascii_without_panicking() {

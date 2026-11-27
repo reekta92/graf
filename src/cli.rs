@@ -25,7 +25,7 @@ pub struct Cli {
     pub max_nodes: Option<usize>,
 
     /// Exclude files matching glob pattern (repeatable)
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::Append)]
     pub exclude: Option<Vec<String>>,
 
     /// Exclude tags (comma-separated)
@@ -75,4 +75,52 @@ pub struct Cli {
     /// Editor command to open files
     #[arg(long)]
     pub editor: Option<String>,
+
+    /// Show direction arrows on graph edges (off by default)
+    #[arg(long)]
+    pub with_arrows: bool,
+
+    /// Arrowhead color as #RRGGBB (use with --with-arrows)
+    #[arg(long, value_parser = parse_hex_color)]
+    pub arrow_color: Option<String>,
+}
+
+fn parse_hex_color(value: &str) -> Result<String, String> {
+    if crate::settings::parse_hex_color(value).is_some() {
+        Ok(value.to_string())
+    } else {
+        Err("expected a hex color in #RRGGBB format".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ignore_dir_alias_accepts_repeated_globs() {
+        // upstream cli uses --exclude; test that it accepts multiple values
+        let cli = Cli::try_parse_from([
+            "graf",
+            "--exclude",
+            "docs/spec/**",
+            "--exclude",
+            "runtime/tests/**",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.exclude,
+            Some(vec!["docs/spec/**".into(), "runtime/tests/**".into()])
+        );
+    }
+
+    #[test]
+    fn arrows_flags_parse() {
+        let cli =
+            Cli::try_parse_from(["graf", "--with-arrows", "--arrow-color", "#12aBcD"])
+                .unwrap();
+        assert!(cli.with_arrows);
+        assert_eq!(cli.arrow_color.as_deref(), Some("#12aBcD"));
+        assert!(Cli::try_parse_from(["graf", "--arrow-color", "red"]).is_err());
+    }
 }
