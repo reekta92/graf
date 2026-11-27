@@ -32,6 +32,9 @@ pub struct AppState {
     pub show_status_bar: bool,
     pub config_reload_msg: Option<String>,
     pub config_reload_ttl: u16,
+    pub rename_note_active: bool,
+    pub rename_note_input: String,
+    pub rename_note_cursor: usize,
     /// Viewport to compare against: auto-fit again once physics settles, unless
     /// the user already panned or zoomed away from this.
     pub auto_fit_baseline: Option<(f64, f64, f64)>,
@@ -108,6 +111,9 @@ impl AppState {
             show_status_bar: config.display.show_status_bar,
             config_reload_msg: None,
             config_reload_ttl: 0,
+            rename_note_active: false,
+            rename_note_input: String::new(),
+            rename_note_cursor: 0,
             auto_fit_baseline,
         }
     }

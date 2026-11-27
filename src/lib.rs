@@ -33,4 +33,4 @@ pub use graph::{
 };
 pub use linker::{FileData, resolve_links, scan_markdown_files};
 pub use theme::ThemeColors;
-pub use wikilink::{add_wikilink, remove_wikilink};
+pub use wikilink::{add_wikilink, remove_wikilink, rename_wikilinks};

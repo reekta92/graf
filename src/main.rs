@@ -98,11 +98,13 @@ enum EventAction {
     Quit,
     OpenFile(String),
     ReloadConfig,
+    RenameNote { from: String, to: String },
 }
 
 struct ReloadCtx<'a> {
     config_path: &'a Option<std::path::PathBuf>,
     cli: &'a cli::Cli,
+    cwd: &'a std::path::PathBuf,
 }
 
 fn dispatch_action(
@@ -136,6 +138,66 @@ fn dispatch_action(
                 reload_ctx.config_path.as_ref(),
                 reload_ctx.cli,
             );
+        }
+        EventAction::RenameNote { from, to } => {
+            let to = if to.ends_with(".md") || to.ends_with(".mdx") {
+                to
+            } else {
+                format!("{to}.md")
+            };
+            if to.split('/').any(|c| c == "..") {
+                app_state.config_reload_msg = Some("Invalid path".to_string());
+                app_state.config_reload_ttl = 90;
+                return Ok(());
+            }
+            let src = reload_ctx.cwd.join(&from);
+            let dst = reload_ctx.cwd.join(&to);
+            if dst.exists() {
+                app_state.config_reload_msg = Some(format!("{to}: already exists"));
+                app_state.config_reload_ttl = 120;
+                return Ok(());
+            }
+            match std::fs::rename(&src, &dst) {
+                Ok(()) => {
+                    let old_stem = std::path::Path::new(&from)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let new_stem = std::path::Path::new(&to)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if !old_stem.eq_ignore_ascii_case(&new_stem) {
+                        // Rewrite wikilinks in all other notes
+                        if let Ok(entries) = std::fs::read_dir(reload_ctx.cwd) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path == dst {
+                                    continue;
+                                }
+                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                                if matches!(ext, "md" | "mdx")
+                                    && let Ok(content) = std::fs::read_to_string(&path)
+                                {
+                                    let updated = crate::wikilink::rename_wikilinks(
+                                        &content, &old_stem, &new_stem,
+                                    );
+                                    if updated != content {
+                                        let _ = std::fs::write(&path, updated);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    app_state.rescan(config);
+                    app_state.config_reload_msg = Some(format!("Moved to {to}"));
+                    app_state.config_reload_ttl = 90;
+                }
+                Err(e) => {
+                    app_state.config_reload_msg = Some(format!("Could not move: {e}"));
+                    app_state.config_reload_ttl = 120;
+                }
+            }
         }
     }
     Ok(())
@@ -197,6 +259,9 @@ fn handle_event(
                     return Ok(Some(EventAction::Quit));
                 }
                 return Ok(None);
+            }
+            if app_state.rename_note_active {
+                return Ok(handle_rename_note_keys(app_state, key));
             }
             if app_state.show_help {
                 if key.code == crossterm::event::KeyCode::Esc
@@ -309,6 +374,23 @@ fn apply_graph_action(
         GraphAction::ConnectionEvent { .. } => None,
         GraphAction::ClearFocus => {
             app_state.exit_focus(config);
+            None
+        }
+        GraphAction::RenameNote => {
+            let path = app_state.graph_state.as_ref().and_then(|gs| {
+                let g = gs.read();
+                g.selection.primary.and_then(|idx| {
+                    g.simulation
+                        .get_graph()
+                        .node_weight(idx)
+                        .map(|n| n.data.id.clone())
+                })
+            });
+            if let Some(path) = path {
+                app_state.rename_note_active = true;
+                app_state.rename_note_cursor = path.len();
+                app_state.rename_note_input = path;
+            }
             None
         }
         // Preview/looking-glass are clin-host features.
@@ -518,6 +600,7 @@ fn main() -> Result<()> {
     let reload_ctx = ReloadCtx {
         config_path: &config_path,
         cli: &cli,
+        cwd: &cwd,
     };
 
     while running {
@@ -608,6 +691,96 @@ fn open_file_in_editor(
         .with_context(|| format!("failed to open editor '{editor}'"))?;
     anyhow::ensure!(status.success(), "editor exited with {status}");
     Ok(())
+}
+
+fn note_input_key(input: &mut String, cursor: &mut usize, key: crossterm::event::KeyEvent) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('u') if ctrl => {
+            input.clear();
+            *cursor = 0;
+        }
+        KeyCode::Char('a') if ctrl => {
+            *cursor = 0;
+        }
+        KeyCode::Home => {
+            *cursor = 0;
+        }
+        KeyCode::End => {
+            *cursor = input.len();
+        }
+        KeyCode::Left if *cursor > 0 => {
+            *cursor = input[..*cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
+        KeyCode::Right if *cursor < input.len() => {
+            *cursor += input[*cursor..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
+        }
+        KeyCode::Backspace if *cursor > 0 => {
+            let prev = input[..*cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            input.drain(prev..*cursor);
+            *cursor = prev;
+        }
+        KeyCode::Delete if *cursor < input.len() => {
+            let next = *cursor
+                + input[*cursor..]
+                    .chars()
+                    .next()
+                    .map(|c| c.len_utf8())
+                    .unwrap_or(0);
+            input.drain(*cursor..next);
+        }
+        KeyCode::Char(ch) if !ctrl => {
+            input.insert(*cursor, ch);
+            *cursor += ch.len_utf8();
+        }
+        _ => {}
+    }
+}
+
+fn handle_rename_note_keys(
+    app_state: &mut app::AppState,
+    key: crossterm::event::KeyEvent,
+) -> Option<EventAction> {
+    use crossterm::event::KeyCode;
+    match key.code {
+        KeyCode::Esc => {
+            app_state.rename_note_active = false;
+            app_state.rename_note_input.clear();
+            None
+        }
+        KeyCode::Enter => {
+            let from = app_state.rename_note_input.clone();
+            let to = app_state.rename_note_input.trim().to_string();
+            app_state.rename_note_active = false;
+            app_state.rename_note_input.clear();
+            if to.is_empty() || to == from {
+                None
+            } else {
+                Some(EventAction::RenameNote { from, to })
+            }
+        }
+        _ => {
+            note_input_key(
+                &mut app_state.rename_note_input,
+                &mut app_state.rename_note_cursor,
+                key,
+            );
+            None
+        }
+    }
 }
 
 fn handle_search_keys(

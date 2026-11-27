@@ -103,6 +103,40 @@ pub fn remove_wikilink(content: &str, target_title: &str) -> String {
     out
 }
 
+/// Replace all `[[old_name]]` / `[[old_name|alias]]` occurrences with
+/// `[[new_name]]` / `[[new_name|alias]]` (case-insensitive name matching).
+/// Returns content unchanged when names are identical ignoring case.
+pub fn rename_wikilinks(content: &str, old_name: &str, new_name: &str) -> String {
+    if old_name.eq_ignore_ascii_case(new_name) {
+        return content.to_string();
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find("[[") {
+        let after_open = &rest[start + 2..];
+        if let Some(close) = after_open.find("]]") {
+            let inner = &after_open[..close];
+            let (name_part, alias_part) = match inner.find('|') {
+                Some(p) => (&inner[..p], Some(&inner[p..])),
+                None => (inner, None),
+            };
+            if name_part.trim().eq_ignore_ascii_case(old_name) {
+                out.push_str(&rest[..start]);
+                match alias_part {
+                    Some(alias) => out.push_str(&format!("[[{new_name}{alias}]]")),
+                    None => out.push_str(&format!("[[{new_name}]]")),
+                }
+                rest = &rest[start + 2 + close + 2..];
+                continue;
+            }
+        }
+        out.push_str(&rest[..start + 2]);
+        rest = &rest[start + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +173,24 @@ mod tests {
     fn remove_nonexistent_link_is_noop() {
         let content = "Body\n\n## Links\n- [[keep me]]\n";
         assert_eq!(remove_wikilink(content, "Missing"), content);
+    }
+
+    #[test]
+    fn rename_wikilinks_basic() {
+        let content = "See [[old-note]] and [[Old-Note|alias]] but not [[old-note-extra]].\n";
+        let out = rename_wikilinks(content, "old-note", "new-note");
+        assert!(out.contains("[[new-note]]"), "plain link renamed");
+        assert!(out.contains("[[new-note|alias]]"), "aliased link renamed");
+        assert!(
+            out.contains("[[old-note-extra]]"),
+            "prefix match not renamed"
+        );
+    }
+
+    #[test]
+    fn rename_wikilinks_same_case_noop() {
+        let content = "[[Note]] text";
+        assert_eq!(rename_wikilinks(content, "note", "Note"), content);
+        assert_eq!(rename_wikilinks(content, "NOTE", "note"), content);
     }
 }
